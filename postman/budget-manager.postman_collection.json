@@ -1,0 +1,567 @@
+{
+  "info": {
+    "name": "Budget Manager API",
+    "_postman_id": "966cf8bb-dbf5-4c85-bee3-d1601ff6fde1",
+    "description": "Collection for the Budget Manager API endpoints secured with Laravel Sanctum.\n\nWorkflow:\n1. Call `Auth / Register` or `Auth / Login` to receive a bearer token (stored automatically).\n2. Use the token for authenticated requests to budgets and transactions.\n3. Call `Auth / Logout` to revoke the current token when finished.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost",
+      "type": "string"
+    },
+    {
+      "key": "userEmail",
+      "value": "user@example.com",
+      "type": "string"
+    },
+    {
+      "key": "userPassword",
+      "value": "Password123!",
+      "type": "string"
+    },
+    {
+      "key": "deviceName",
+      "value": "postman",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "budgetId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "transactionId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "currentYear",
+      "value": "2024",
+      "type": "string"
+    },
+    {
+      "key": "currentMonth",
+      "value": "9",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.request.headers.upsert({ key: 'Accept', value: 'application/json' });",
+          "const token = pm.collectionVariables.get('authToken') || (pm.environment && pm.environment.get('authToken'));",
+          "if (token) {",
+          "  pm.request.headers.upsert({ key: 'Authorization', value: `Bearer ${token}` });",
+          "} else {",
+          "  pm.request.headers.remove('Authorization');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "register"
+              ]
+            },
+            "description": "Registers a new user and returns a bearer token.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"API User\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\",\n  \"password_confirmation\": \"{{userPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Created user', function () { pm.response.to.have.status(201); });",
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.collectionVariables.set('authToken', json.token);",
+                  "  if (pm.environment && pm.environment.name) {",
+                  "    try { pm.environment.set('authToken', json.token); } catch (err) {}",
+                  "  }",
+                  "}",
+                  "pm.test('Token returned', function () { pm.expect(json.token).to.exist; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "login"
+              ]
+            },
+            "description": "Authenticates an existing user and issues a bearer token.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\",\n  \"device_name\": \"{{deviceName}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Authenticated', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.collectionVariables.set('authToken', json.token);",
+                  "  if (pm.environment && pm.environment.name) {",
+                  "    try { pm.environment.set('authToken', json.token); } catch (err) {}",
+                  "  }",
+                  "}",
+                  "pm.test('Token returned', function () { pm.expect(json.token).to.exist; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me"
+              ]
+            },
+            "description": "Returns the authenticated user's profile and related data."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fetched profile', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "logout"
+              ]
+            },
+            "description": "Revokes the current bearer token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logged out', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.unset('authToken');",
+                  "if (pm.environment && pm.environment.name) {",
+                  "  try { pm.environment.unset('authToken'); } catch (err) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Budgets",
+      "item": [
+        {
+          "name": "List budgets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/budgets?year={{currentYear}}&month={{currentMonth}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "budgets?year={{currentYear}}&month={{currentMonth}}"
+              ]
+            },
+            "description": "Returns all budgets for the requested year and month."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fetched budgets', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Show budget",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/budgets/{{budgetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "budgets",
+                "{{budgetId}}"
+              ]
+            },
+            "description": "Fetch a single budget with calculated fields."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fetched budget', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update budget",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/budgets/{{budgetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "budgets",
+                "{{budgetId}}"
+              ]
+            },
+            "description": "Update the planned amount for a budget entry.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planned_amount\": 4500\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Updated budget', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {
+          "name": "Form options",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/options",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "options"
+              ]
+            },
+            "description": "Retrieve categories, cash flow sources, and budgets for forms."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fetched options', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?per_page=25",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions?per_page=25"
+              ]
+            },
+            "description": "Paginated list of transactions with optional filters."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fetched transactions', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ]
+            },
+            "description": "Create a new transaction entry.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"expense\",\n  \"category_id\": 1,\n  \"cash_flow_source_id\": null,\n  \"amount\": 120.5,\n  \"transaction_date\": \"2024-09-01\",\n  \"description\": \"Groceries\",\n  \"notes\": \"Weekly supermarket run\",\n  \"reference_number\": \"INV-1001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Created transaction', function () { pm.response.to.have.status(201); });",
+                  "const json = pm.response.json();",
+                  "if (json.transaction && json.transaction.id) {",
+                  "  pm.collectionVariables.set('transactionId', json.transaction.id);",
+                  "}",
+                  "pm.test('Transaction returned', function () { pm.expect(json.transaction).to.exist; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Show transaction",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "View a transaction and its relations."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fetched transaction', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update transaction",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "Update an existing transaction.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"expense\",\n  \"category_id\": 1,\n  \"cash_flow_source_id\": null,\n  \"amount\": 130.75,\n  \"transaction_date\": \"2024-09-05\",\n  \"description\": \"Groceries - updated\",\n  \"notes\": \"Added more items\",\n  \"reference_number\": \"INV-1001-A\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Updated transaction', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete transaction",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "Delete a transaction entry."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Deleted transaction', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

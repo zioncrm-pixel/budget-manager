@@ -1,0 +1,71 @@
+const submitForm = async () => {
+    isLoading.value = true
+
+    const payload = {
+        ...form.data(),
+        planned_amount: form.planned_amount ? parseFloat(form.planned_amount) : null,
+        is_active: Boolean(form.is_active),
+        year: props.year,
+        month: props.month,
+    }
+
+    try {
+        if (isEditMode.value && props.category?.budget?.id) {
+            await form.put(route('budgets.manage.update', props.category.budget.id), {
+                preserveScroll: true,
+                onSuccess: () => {
+                    emit('saved')
+                    handleClose()
+                },
+                onError: () => {
+                    isLoading.value = false
+                },
+            })
+        } else {
+            await form.post(route('budgets.manage.store'), payload, {
+                preserveScroll: true,
+                onSuccess: () => {
+                    emit('saved')
+                    handleClose()
+                },
+                onError: () => {
+                    isLoading.value = false
+                },
+            })
+        }
+    } finally {
+        isLoading.value = false
+    }
+}
+
+const deleteBudget = async () => {
+    if (!isEditMode.value || !props.category?.budget?.id) {
+        return
+    }
+
+    if (!confirm('למחוק את התקציב והקטגוריה הזו? (הקטגוריה תישאר ללא תקציב)')) {
+        return
+    }
+
+    isDeleting.value = true
+
+    await form.delete(route('budgets.manage.destroy', props.category.budget.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            isDeleting.value = false
+            emit('deleted')
+            handleClose()
+        },
+        onError: () => {
+            isDeleting.value = false
+        },
+    })
+}
+
+const handleClose = () => {
+    form.reset()
+    isLoading.value = false
+    isDeleting.value = false
+    emit('close')
+}
+</script>
