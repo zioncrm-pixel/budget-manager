@@ -316,28 +316,7 @@ watch(selectedAccountRow, (row) => {
 
     <AuthenticatedLayout>
         <template #header>
-            <div class="flex flex-col gap-4 text-right">
-                <div class="flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                        ניהול תזרים
-                    </h2>
-                    <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
-                        <span>
-                            בחירת תקופה:
-                            <span class="font-semibold text-gray-900">
-                                {{ selectedYear }} - {{ monthOptions.find(m => m.value === selectedMonth)?.label || selectedMonth }}
-                            </span>
-                        </span>
-                        <PeriodSelector
-                            :selected-year="selectedYear"
-                            :selected-month="selectedMonth"
-                            :year-options="yearOptions"
-                            :month-options="monthOptions"
-                            @update:year="handleYearUpdate"
-                            @update:month="handleMonthUpdate"
-                        />
-                    </div>
-                </div>
+            <div class="flex flex-col gap-2 text-right">
 
                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div class="bg-white border border-gray-200 rounded-md px-4 py-3 text-right">
@@ -355,7 +334,27 @@ watch(selectedAccountRow, (row) => {
                 </div>
             </div>
         </template>
-
+        <div class="flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <!-- <h2 class="text-xl font-semibold leading-tight text-gray-800">
+                        ניהול תזרים
+                    </h2> -->
+                    <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
+                        <span>
+                            בחירת תקופה:
+                            <span class="font-semibold text-gray-900">
+                                {{ selectedYear }} - {{ monthOptions.find(m => m.value === selectedMonth)?.label || selectedMonth }}
+                            </span>
+                        </span>
+                        <PeriodSelector
+                            :selected-year="selectedYear"
+                            :selected-month="selectedMonth"
+                            :year-options="yearOptions"
+                            :month-options="monthOptions"
+                            @update:year="handleYearUpdate"
+                            @update:month="handleMonthUpdate"
+                        />
+                    </div>
+                </div>
         <div class="py-6">
             <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
                 <div class="flex flex-col gap-8">

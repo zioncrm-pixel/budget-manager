@@ -344,7 +344,11 @@ const assignSelected = async () => {
                 'Accept': 'application/json',
                 'X-CSRF-TOKEN': csrfToken,
             },
-            body: JSON.stringify({ transaction_ids: selectedAvailableIds.value }),
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                transaction_ids: selectedAvailableIds.value,
+                _token: csrfToken,
+            }),
         })
 
         if (!response.ok) {
@@ -397,6 +401,10 @@ const confirmUnassign = async (transaction) => {
                 'Accept': 'application/json',
                 'X-CSRF-TOKEN': csrfToken,
             },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                _token: csrfToken,
+            }),
         })
 
         if (!response.ok) {
