@@ -50,6 +50,21 @@
       "key": "currentMonth",
       "value": "9",
       "type": "string"
+    },
+    {
+      "key": "resetUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "resetToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "resetEmail",
+      "value": "",
+      "type": "string"
     }
   ],
   "event": [
@@ -170,6 +185,111 @@
                   "  }",
                   "}",
                   "pm.test('Token returned', function () { pm.expect(json.token).to.exist; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "forgot-password"
+              ]
+            },
+            "description": "Generate a password reset link for the given email. The response includes the reset URL for local development without email delivery.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{userEmail}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Reset link requested', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.test('Reset link present', function () { pm.expect(json.reset_url).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('resetUrl', json.reset_url || '');",
+                  "let resetEmail = pm.collectionVariables.get('userEmail');",
+                  "try {",
+                  "  if (json.reset_url) {",
+                  "    const parsed = new URL(json.reset_url);",
+                  "    const parts = parsed.pathname.split('/');",
+                  "    const token = parts.pop() || parts.pop();",
+                  "    if (token) { pm.collectionVariables.set('resetToken', token); }",
+                  "    const emailParam = parsed.searchParams.get('email');",
+                  "    if (emailParam) { resetEmail = emailParam; }",
+                  "  }",
+                  "} catch (err) {",
+                  "  console.warn('Could not parse reset URL', err);",
+                  "}",
+                  "pm.collectionVariables.set('resetEmail', resetEmail);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reset-password"
+              ]
+            },
+            "description": "Complete the password reset using the token from the forgot password response.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"email\": \"{{resetEmail}}\",\n  \"password\": \"{{userPassword}}\",\n  \"password_confirmation\": \"{{userPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Password reset', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.test('Reset status returned', function () { pm.expect(json.status).to.be.a('string'); });"
                 ]
               }
             }

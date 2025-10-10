@@ -4,11 +4,15 @@ import InputError from '@/Components/InputError.vue';
 import InputLabel from '@/Components/InputLabel.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
 import TextInput from '@/Components/TextInput.vue';
-import { Head, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm } from '@inertiajs/vue3';
 
 defineProps({
     status: {
         type: String,
+    },
+    resetLink: {
+        type: String,
+        default: '',
     },
 });
 
@@ -23,29 +27,42 @@ const submit = () => {
 
 <template>
     <GuestLayout>
-        <Head title="Forgot Password" />
+        <Head title="אפס סיסמה" />
 
-        <div class="mb-4 text-sm text-gray-600">
-            Forgot your password? No problem. Just let us know your email
-            address and we will email you a password reset link that will allow
-            you to choose a new one.
+        <div class="mb-4 text-sm text-gray-600 text-right leading-relaxed">
+            שכחת את הסיסמה? אין בעיה. הזן את כתובת הדוא&quot;ל שלך ונשלח אליך קישור לאיפוס סיסמה,
+            דרכו תוכל להגדיר סיסמה חדשה ולעבור למערכת.
         </div>
 
         <div
             v-if="status"
-            class="mb-4 text-sm font-medium text-green-600"
+            class="mb-4 text-sm font-medium text-green-600 text-right"
         >
             {{ status }}
         </div>
 
+        <div
+            v-if="resetLink"
+            class="mb-4 rounded border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-700 text-right"
+        >
+            קישור ישיר לאיפוס: 
+            <a
+                :href="resetLink"
+                class="font-semibold underline"
+            >
+                לחץ כאן
+            </a>
+            או העתק את הכתובת: {{ resetLink }}
+        </div>
+
         <form @submit.prevent="submit">
             <div>
-                <InputLabel for="email" value="Email" />
+                <InputLabel for="email" value="דוא&quot;ל" class="text-right" />
 
                 <TextInput
                     id="email"
                     type="email"
-                    class="mt-1 block w-full"
+                    class="mt-1 block w-full text-right"
                     v-model="form.email"
                     required
                     autofocus
@@ -55,12 +72,18 @@ const submit = () => {
                 <InputError class="mt-2" :message="form.errors.email" />
             </div>
 
-            <div class="mt-4 flex items-center justify-end">
+            <div class="mt-6 flex items-center justify-between">
+                <Link
+                    :href="route('login')"
+                    class="text-sm text-gray-600 underline hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                >
+                    חזרה להתחברות
+                </Link>
                 <PrimaryButton
                     :class="{ 'opacity-25': form.processing }"
                     :disabled="form.processing"
                 >
-                    Email Password Reset Link
+                    שליחת קישור לאיפוס
                 </PrimaryButton>
             </div>
         </form>

@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -88,6 +91,72 @@ class AuthController extends Controller
     {
         return response()->json([
             'user' => $request->user()->load(['categories', 'cashFlowSources']),
+        ]);
+    }
+
+    /**
+     * Send a password reset link and return it in the response (for development usage).
+     */
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $user = Password::broker()->getUser(['email' => $data['email']]);
+
+        if (! $user) {
+            throw ValidationException::withMessages([
+                'email' => [trans(Password::INVALID_USER)],
+            ]);
+        }
+
+        $token = Password::broker()->createToken($user);
+        $user->sendPasswordResetNotification($token);
+
+        $resetUrl = url(route('password.reset', [
+            'token' => $token,
+            'email' => $user->email,
+        ], false));
+
+        return response()->json([
+            'status' => trans(Password::RESET_LINK_SENT),
+            'reset_url' => $resetUrl,
+        ]);
+    }
+
+    /**
+     * Reset the user password using a token from forgot password flow.
+     */
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string'],
+            'email' => ['required', 'email'],
+            'password' => ['required', 'confirmed', 'min:8'],
+        ]);
+
+        $status = Password::reset(
+            $data,
+            function (User $user, string $password): void {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                ])->setRememberToken(Str::random(60));
+
+                $user->save();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            throw ValidationException::withMessages([
+                'email' => [trans($status)],
+            ]);
+        }
+
+        return response()->json([
+            'status' => trans($status),
         ]);
     }
 }
