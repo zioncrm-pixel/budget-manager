@@ -88,6 +88,7 @@ class TransactionController extends Controller
             'cash_flow_source_id' => 'nullable|exists:cash_flow_sources,id', // השתנה ל-nullable
             'amount' => 'required|numeric|min:0.01',
             'transaction_date' => 'required|date',
+            'posting_date' => 'nullable|date',
             'description' => 'required|string|max:255',
             'notes' => 'nullable|string',
             'reference_number' => 'nullable|string|max:255',
@@ -134,6 +135,7 @@ class TransactionController extends Controller
                 'amount' => $request->amount,
                 'type' => $request->type,
                 'transaction_date' => $request->transaction_date,
+                'posting_date' => $request->input('posting_date') ?? $request->transaction_date,
                 'description' => $request->description,
                 'notes' => $request->notes,
                 'reference_number' => $request->reference_number,
@@ -204,6 +206,7 @@ class TransactionController extends Controller
             'cash_flow_source_id' => 'nullable|exists:cash_flow_sources,id',
             'amount' => 'required|numeric|min:0.01',
             'transaction_date' => 'required|date',
+            'posting_date' => 'nullable|date',
             'description' => 'required|string|max:255',
             'notes' => 'nullable|string',
             'reference_number' => 'nullable|string|max:255',
@@ -255,6 +258,7 @@ class TransactionController extends Controller
                 'amount' => $request->amount,
                 'type' => $request->type,
                 'transaction_date' => $request->transaction_date,
+                'posting_date' => $request->input('posting_date') ?? $request->transaction_date,
                 'description' => $request->description,
                 'notes' => $request->notes,
                 'reference_number' => $request->reference_number,
@@ -339,6 +343,10 @@ class TransactionController extends Controller
                 ? $transaction->transaction_date->copy()
                 : Carbon::parse($transaction->transaction_date);
 
+            $originalPostingDate = $transaction->posting_date instanceof Carbon
+                ? $transaction->posting_date->copy()
+                : ($transaction->posting_date ? Carbon::parse($transaction->posting_date) : null);
+
             $targetMonth = Carbon::create($data['year'], $data['month'], 1)->startOfDay();
             $day = min($originalDate->day, $targetMonth->copy()->endOfMonth()->day);
             $newDate = $targetMonth->copy()->day($day)->setTime(
@@ -349,6 +357,9 @@ class TransactionController extends Controller
 
             $newTransaction = $transaction->replicate();
             $newTransaction->transaction_date = $newDate;
+            $newTransaction->posting_date = $originalPostingDate
+                ? $originalPostingDate->copy()->setDate($newDate->year, $newDate->month, $newDate->day)
+                : $newDate;
             $newTransaction->save();
 
             if ($newTransaction->type === 'expense' && $newTransaction->category_id) {
@@ -443,6 +454,10 @@ class TransactionController extends Controller
                     ? $transaction->transaction_date->copy()
                     : Carbon::parse($transaction->transaction_date);
 
+                $originalPostingDate = $transaction->posting_date instanceof Carbon
+                    ? $transaction->posting_date->copy()
+                    : ($transaction->posting_date ? Carbon::parse($transaction->posting_date) : null);
+
                 $newDate = $targetDate->copy()->setTime(
                     (int) $originalDate->format('H'),
                     (int) $originalDate->format('i'),
@@ -451,6 +466,9 @@ class TransactionController extends Controller
 
                 $newTransaction = $transaction->replicate();
                 $newTransaction->transaction_date = $newDate;
+                $newTransaction->posting_date = $originalPostingDate
+                    ? $originalPostingDate->copy()->setDate($newDate->year, $newDate->month, $newDate->day)
+                    : $newDate;
                 $newTransaction->save();
 
                 if ($newTransaction->type === 'expense' && $newTransaction->category_id) {

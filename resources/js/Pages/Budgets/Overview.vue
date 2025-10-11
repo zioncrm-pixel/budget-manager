@@ -180,42 +180,40 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
     <Head title="קטגוריות ותקציבים" />
 
     <AuthenticatedLayout>
-        <template #header>
+  <template #header>
             <div class="flex flex-col gap-4 text-right">
-                <div class="flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                        קטגוריות ותקציבים
-                    </h2>
-                    <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
-                        <span>
-                            בחירת תקופה:
-                            <span class="font-semibold text-gray-900">
-                                {{ selectedYear }} - {{ selectedMonthLabel }}
+                <div class="flex w-full flex-row items-start gap-6 text-right">
+                    <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                            <p class="text-xs text-gray-500">יתרה</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
+                        </div>
+                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                            <p class="text-xs text-gray-500">סה"כ הכנסות</p>
+                            <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
+                        </div>
+                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                            <p class="text-xs text-gray-500">סה"כ הוצאות</p>
+                            <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
+                        </div>
+                    </div>
+                    <div class="ml-auto flex flex-col items-end gap-3 sm:flex-row sm:items-center sm:gap-6">
+                        <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
+                            <span>
+                                בחירת תקופה:
+                                <span class="font-semibold text-gray-900">
+                                    {{ selectedYear }} - {{ selectedMonthLabel }}
+                                </span>
                             </span>
-                        </span>
-                        <PeriodSelector
-                            :selected-year="selectedYear"
-                            :selected-month="selectedMonth"
-                            :year-options="yearOptions"
-                            :month-options="monthOptions"
-                            @update:year="handleYearUpdate"
-                            @update:month="handleMonthUpdate"
-                        />
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
-                        <p class="text-xs text-gray-500">יתרה</p>
-                        <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
-                    </div>
-                    <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
-                        <p class="text-xs text-gray-500">סה"כ הכנסות</p>
-                        <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
-                    </div>
-                    <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
-                        <p class="text-xs text-gray-500">סה"כ הוצאות</p>
-                        <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
+                            <PeriodSelector
+                                :selected-year="selectedYear"
+                                :selected-month="selectedMonth"
+                                :year-options="yearOptions"
+                                :month-options="monthOptions"
+                                @update:year="handleYearUpdate"
+                                @update:month="handleMonthUpdate"
+                            />
+                        </div>
                     </div>
                 </div>
             </div>

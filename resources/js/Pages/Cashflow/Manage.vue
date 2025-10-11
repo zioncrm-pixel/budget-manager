@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { Head, router } from '@inertiajs/vue3'
+import { Head, router, Link } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import TransactionAddModal from '@/Components/TransactionAddModal.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
@@ -43,6 +43,11 @@ const monthOptions = [
 
 const yearOptions = [2020, 2021, 2022, 2023, 2024, 2025, 2026]
 
+const selectedMonthLabel = computed(() => {
+    const current = monthOptions.find(option => String(option.value) === String(selectedMonth.value))
+    return current?.label || selectedMonth.value
+})
+
 const localAccountStatementRows = ref(props.accountStatementRows?.map(row => ({ ...row })) || [])
 
 const defaultAccountSort = () => ({ key: 'date', direction: 'desc' })
@@ -53,15 +58,18 @@ const transactionSort = ref({ key: null, direction: null })
 const duplicatingSourceId = ref(null)
 const duplicatingTransactionId = ref(null)
 const selectedTransactionIds = ref([])
+const selectedAccountTransactionIds = ref([])
 const isBulkDuplicateModalOpen = ref(false)
 const bulkDuplicateDate = ref('')
 const bulkDuplicateError = ref(null)
 const isBulkSubmitting = ref(false)
 const isBulkDeleting = ref(false)
+const bulkActionContext = ref('transactions')
 const transactionDayFilter = ref(null)
 const isDayFilterOpen = ref(false)
 const dayFilterContainer = ref(null)
 const selectAllTransactionsCheckbox = ref(null)
+const selectAllAccountRowsCheckbox = ref(null)
 
 const navigateToPeriod = (year, month) => {
     router.visit(`/cashflow?year=${year}&month=${month}`, {
@@ -128,6 +136,7 @@ const accountSorters = {
 
 const transactionSorters = {
     date: (transaction) => toTimestamp(transaction.transaction_date),
+    posting_date: (transaction) => toTimestamp(transaction.posting_date || transaction.transaction_date),
     description: (transaction) => (transaction.description || '').toString().toLowerCase(),
     category: (transaction) => (transaction.category?.name || '').toString().toLowerCase(),
     amount: (transaction) => Number(transaction.amount || 0),
@@ -176,22 +185,30 @@ const filteredTransactions = computed(() => {
 })
 
 const availableTransactionDays = computed(() => {
+    if (!selectedAccountRow.value) {
+        return []
+    }
+
     const items = transactionsForSelectedRow.value
-    const unique = new Set()
+    const year = Number(selectedYear.value)
+    const month = Number(selectedMonth.value)
+    const daysInMonth = new Date(year, month, 0).getDate()
+    const transactionsSet = new Set(
+        items.map(transaction => getTransactionDateKey(transaction.transaction_date))
+    )
 
-    items.forEach((transaction) => {
-        const key = getTransactionDateKey(transaction.transaction_date)
-        if (key) {
-            unique.add(key)
-        }
-    })
+    const results = []
 
-    return Array.from(unique)
-        .sort((a, b) => (a > b ? 1 : -1))
-        .map((key) => ({
+    for (let day = 1; day <= daysInMonth; day += 1) {
+        const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+        results.push({
             key,
-            label: new Date(key).toLocaleDateString('he-IL'),
-        }))
+            label: new Date(year, month - 1, day).toLocaleDateString('he-IL'),
+            hasTransactions: transactionsSet.has(key),
+        })
+    }
+
+    return results
 })
 
 const transactionDayLabel = computed(() => {
@@ -227,6 +244,22 @@ const areAllTransactionsSelected = computed(() => {
     const selectedSet = new Set(selectedTransactionIds.value)
     return transactions.every(transaction => selectedSet.has(transaction.id))
 })
+const selectableAccountRows = computed(() =>
+    (sortedAccountStatementRows.value || []).filter(row => row.type === 'individual_transaction' && row.transaction_id)
+)
+const hasAccountSelection = computed(() => selectedAccountTransactionIds.value.length > 0)
+const selectedAccountCount = computed(() => selectedAccountTransactionIds.value.length)
+const areAllAccountRowsSelected = computed(() => {
+    const rows = selectableAccountRows.value
+    if (!rows.length) {
+        return false
+    }
+
+    const selectedSet = new Set(selectedAccountTransactionIds.value)
+    return rows.every(row => selectedSet.has(Number(row.transaction_id)))
+})
+const bulkSelectionCount = computed(() => (bulkActionContext.value === 'account' ? selectedAccountCount.value : selectedTransactionsCount.value))
+const bulkSelectionLabel = computed(() => (bulkActionContext.value === 'account' ? 'שורות עו"ש' : 'תזרימים'))
 
 const compareValues = (a, b) => {
     if (a === b) return 0
@@ -343,8 +376,13 @@ const clearSelection = () => {
     selectedAccountRow.value = null
     transactionSort.value = { key: null, direction: null }
     selectedTransactionIds.value = []
+    selectedAccountTransactionIds.value = []
     transactionDayFilter.value = null
     isDayFilterOpen.value = false
+}
+
+const clearAccountRowSelection = () => {
+    selectedAccountTransactionIds.value = []
 }
 
 const openCreateModal = () => {
@@ -452,6 +490,61 @@ const toggleSelectAllTransactions = (checked) => {
     }
 }
 
+const isAccountRowSelectable = (row) => row?.type === 'individual_transaction' && Boolean(row?.transaction_id)
+const isAccountRowSelected = (row) => {
+    if (!isAccountRowSelectable(row)) {
+        return false
+    }
+    const idValue = Number(row.transaction_id)
+    return selectedAccountTransactionIds.value.includes(idValue)
+}
+
+const toggleAccountRowSelection = (row, checked) => {
+    if (!isAccountRowSelectable(row)) {
+        return
+    }
+
+    const idValue = Number(row.transaction_id)
+    if (!Number.isFinite(idValue)) {
+        return
+    }
+
+    const set = new Set(selectedAccountTransactionIds.value)
+    if (checked) {
+        set.add(idValue)
+    } else {
+        set.delete(idValue)
+    }
+
+    selectedAccountTransactionIds.value = Array.from(set)
+}
+
+const toggleSelectAllAccountRows = (checked) => {
+    if (checked) {
+        selectedAccountTransactionIds.value = selectableAccountRows.value
+            .map(row => Number(row.transaction_id))
+            .filter(Number.isFinite)
+    } else {
+        selectedAccountTransactionIds.value = []
+    }
+}
+
+const getSelectionIdsForContext = (context) => context === 'account'
+    ? selectedAccountTransactionIds.value
+    : selectedTransactionIds.value
+
+const hasSelectionForContext = (context) => context === 'account'
+    ? hasAccountSelection.value
+    : hasTransactionSelection.value
+
+const clearSelectionForContext = (context) => {
+    if (context === 'account') {
+        selectedAccountTransactionIds.value = []
+    } else {
+        selectedTransactionIds.value = []
+    }
+}
+
 const getDefaultBulkDuplicateDate = () => {
     const today = new Date()
     if (today.getFullYear() !== selectedYear.value || (today.getMonth() + 1) !== selectedMonth.value) {
@@ -463,11 +556,12 @@ const getDefaultBulkDuplicateDate = () => {
     return formatDateForInput(new Date(selectedYear.value, selectedMonth.value - 1, day))
 }
 
-const openBulkDuplicateModal = () => {
-    if (!hasTransactionSelection.value) {
+const openBulkDuplicateModal = (context = 'transactions') => {
+    if (!hasSelectionForContext(context)) {
         return
     }
 
+    bulkActionContext.value = context
     bulkDuplicateError.value = null
     bulkDuplicateDate.value = getDefaultBulkDuplicateDate()
     isBulkDuplicateModalOpen.value = true
@@ -476,10 +570,13 @@ const openBulkDuplicateModal = () => {
 const closeBulkDuplicateModal = () => {
     isBulkDuplicateModalOpen.value = false
     bulkDuplicateError.value = null
+    bulkActionContext.value = 'transactions'
 }
 
 const submitBulkDuplicate = () => {
-    if (!hasTransactionSelection.value || !bulkDuplicateDate.value) {
+    const selectionIds = getSelectionIdsForContext(bulkActionContext.value)
+
+    if (!selectionIds.length || !bulkDuplicateDate.value) {
         bulkDuplicateError.value = 'בחר תאריך לשכפול'
         return
     }
@@ -488,13 +585,13 @@ const submitBulkDuplicate = () => {
     bulkDuplicateError.value = null
 
     router.post(route('transactions.duplicate.bulk'), {
-        transaction_ids: selectedTransactionIds.value,
+        transaction_ids: selectionIds,
         date: bulkDuplicateDate.value,
     }, {
         preserveScroll: true,
         onSuccess: () => {
             closeBulkDuplicateModal()
-            selectedTransactionIds.value = []
+            clearSelectionForContext(bulkActionContext.value)
             navigateToPeriod(selectedYear.value, selectedMonth.value)
         },
         onError: (errors) => {
@@ -506,8 +603,8 @@ const submitBulkDuplicate = () => {
     })
 }
 
-const confirmBulkDelete = () => {
-    if (!hasTransactionSelection.value) {
+const confirmBulkDelete = (context = 'transactions') => {
+    if (!hasSelectionForContext(context)) {
         return
     }
 
@@ -518,11 +615,11 @@ const confirmBulkDelete = () => {
     isBulkDeleting.value = true
 
     router.post(route('transactions.delete.bulk'), {
-        transaction_ids: selectedTransactionIds.value,
+        transaction_ids: getSelectionIdsForContext(context),
     }, {
         preserveScroll: true,
         onSuccess: () => {
-            selectedTransactionIds.value = []
+            clearSelectionForContext(context)
             navigateToPeriod(selectedYear.value, selectedMonth.value)
         },
         onError: (errors) => {
@@ -579,6 +676,13 @@ watch(() => props.accountStatementRows, (newRows) => {
             const matchedRow = localAccountStatementRows.value.find(row => row.id === previousSelectionId)
             selectedAccountRow.value = matchedRow || null
         }
+
+        const allowedAccountIds = newRows
+            .filter(row => row.type === 'individual_transaction' && row.transaction_id)
+            .map(row => Number(row.transaction_id))
+            .filter(Number.isFinite)
+        const allowedSet = new Set(allowedAccountIds)
+        selectedAccountTransactionIds.value = selectedAccountTransactionIds.value.filter(id => allowedSet.has(id))
     }
 }, { immediate: true, deep: true })
 
@@ -606,6 +710,12 @@ watch([hasTransactionSelection, areAllTransactionsSelected], () => {
     }
 })
 
+watch([hasAccountSelection, areAllAccountRowsSelected], () => {
+    if (selectAllAccountRowsCheckbox.value) {
+        selectAllAccountRowsCheckbox.value.indeterminate = hasAccountSelection.value && !areAllAccountRowsSelected.value
+    }
+})
+
 watch(availableTransactionDays, (days) => {
     if (transactionDayFilter.value && !days.some(day => day.key === transactionDayFilter.value)) {
         transactionDayFilter.value = null
@@ -629,46 +739,45 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
     <Head title="ניהול תזרים" />
 
     <AuthenticatedLayout>
-        <template #header>
-            <div class="flex flex-col gap-2 text-right">
-
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <div class="bg-white border border-gray-200 rounded-md px-4 py-3 text-right">
-                        <p class="text-xs text-gray-500">יתרה</p>
-                        <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
+          <template #header>
+            <div class="flex flex-col gap-4 text-right">
+                <div class="flex w-full flex-row items-start gap-6 text-right">
+                    <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                            <p class="text-xs text-gray-500">יתרה</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
+                        </div>
+                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                            <p class="text-xs text-gray-500">סה"כ הכנסות</p>
+                            <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
+                        </div>
+                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                            <p class="text-xs text-gray-500">סה"כ הוצאות</p>
+                            <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
+                        </div>
                     </div>
-                    <div class="bg-white border border-gray-200 rounded-md px-4 py-3 text-right">
-                        <p class="text-xs text-gray-500">סה"כ הכנסות</p>
-                        <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
-                    </div>
-                    <div class="bg-white border border-gray-200 rounded-md px-4 py-3 text-right">
-                        <p class="text-xs text-gray-500">סה"כ הוצאות</p>
-                        <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
+                    <div class="ml-auto flex flex-col items-end gap-3 sm:flex-row sm:items-center sm:gap-6">
+                        <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
+                            <span>
+                                בחירת תקופה:
+                                <span class="font-semibold text-gray-900">
+                                    {{ selectedYear }} - {{ selectedMonthLabel }}
+                                </span>
+                            </span>
+                            <PeriodSelector
+                                :selected-year="selectedYear"
+                                :selected-month="selectedMonth"
+                                :year-options="yearOptions"
+                                :month-options="monthOptions"
+                                @update:year="handleYearUpdate"
+                                @update:month="handleMonthUpdate"
+                            />
+                        </div>
                     </div>
                 </div>
             </div>
         </template>
-        <div class="flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <!-- <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                        ניהול תזרים
-                    </h2> -->
-                    <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
-                        <span>
-                            בחירת תקופה:
-                            <span class="font-semibold text-gray-900">
-                                {{ selectedYear }} - {{ monthOptions.find(m => m.value === selectedMonth)?.label || selectedMonth }}
-                            </span>
-                        </span>
-                        <PeriodSelector
-                            :selected-year="selectedYear"
-                            :selected-month="selectedMonth"
-                            :year-options="yearOptions"
-                            :month-options="monthOptions"
-                            @update:year="handleYearUpdate"
-                            @update:month="handleMonthUpdate"
-                        />
-                    </div>
-                </div>
+        
         <div class="py-6">
             <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
                 <div class="flex flex-col gap-8">
@@ -677,23 +786,77 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                             <h3 class="text-lg font-medium text-gray-900 text-right">שורות עו"ש</h3>
                             <p class="text-sm text-gray-500">לחץ על שורה כדי לראות את פירוט העסקאות שלה.</p>
                         </div>
-                        <button 
-                            @click="openCreateModal"
-                            class="inline-flex items-center px-4 py-2 bg-indigo-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-indigo-700 focus:bg-indigo-700 active:bg-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150"
-                        >
-                            <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                            </svg>
-                            הוסף תזרים
-                        </button>
+                        <div class="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
+                            <button 
+                                @click="openCreateModal"
+                                class="inline-flex items-center justify-center px-4 py-2 bg-indigo-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-indigo-700 focus:bg-indigo-700 active:bg-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150"
+                            >
+                                <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                </svg>
+                                הוסף תזרים
+                            </button>
+                            <Link
+                                :href="route('cashflow.import.index')"
+                                class="inline-flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md font-semibold text-xs text-indigo-600 uppercase tracking-widest bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150"
+                            >
+                                <svg class="w-4 h-4 ml-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 12v9m0-9l-3 3m3-3l3 3M12 4H8m4-2H8a2 2 0 00-2 2v8m10-8h-4" />
+                                </svg>
+                                ייבוא מקובץ
+                            </Link>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200">
+                            <div class="px-6 py-4 border-b border-gray-200 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <p class="text-xs text-gray-500">
+                                    ניתן לבחור שורות עו"ש מסוג תזרים בודד ולבצע שכפול או מחיקה מרובה.
+                                </p>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <button
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700 transition-colors hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        :disabled="!hasAccountSelection || isBulkSubmitting"
+                                        @click="openBulkDuplicateModal('account')"
+                                    >
+                                        📄 שכפל נבחרים
+                                        <span v-if="selectedAccountCount" class="ml-1">({{ selectedAccountCount }})</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        :disabled="!hasAccountSelection || isBulkDeleting"
+                                        @click="confirmBulkDelete('account')"
+                                    >
+                                        🗑️ מחק נבחרים
+                                        <span v-if="selectedAccountCount" class="ml-1">({{ selectedAccountCount }})</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-500 transition-colors hover:text-gray-700 hover:bg-gray-100"
+                                        :disabled="!hasAccountSelection"
+                                        @click="clearAccountRowSelection"
+                                    >
+                                        נקה בחירה
+                                    </button>
+                                </div>
+                            </div>
                             <div class="overflow-x-auto">
                                 <table class="min-w-full divide-y divide-gray-200">
                                     <thead class="bg-gray-50">
                                         <tr>
+                                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                <input
+                                                    ref="selectAllAccountRowsCheckbox"
+                                                    type="checkbox"
+                                                    class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                                    :checked="areAllAccountRowsSelected"
+                                                    @change="toggleSelectAllAccountRows($event.target.checked)"
+                                                    :disabled="!selectableAccountRows.length"
+                                                />
+                                            </th>
                                             <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                 <button type="button"
                                                         class="w-full flex flex-row-reverse items-center justify-between gap-1 text-right hover:text-indigo-500"
@@ -742,6 +905,16 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                                 'border-l-4 border-green-500': row.type === 'cash_flow_source'
                                             }"
                                             @click="selectAccountRow(row)">
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                                                <input
+                                                    type="checkbox"
+                                                    class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                                    :disabled="!isAccountRowSelectable(row)"
+                                                    :checked="isAccountRowSelected(row)"
+                                                    @click.stop
+                                                    @change="toggleAccountRowSelection(row, $event.target.checked)"
+                                                />
+                                            </td>
                                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                                                 <div class="flex items-center">
                                                     <span class="mr-2 text-lg">{{ row.source_icon || '📊' }}</span>
@@ -845,7 +1018,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                             </td>
                                         </tr>
                                         <tr v-if="!sortedAccountStatementRows || sortedAccountStatementRows.length === 0">
-                                            <td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500">
+                                            <td colspan="6" class="px-6 py-4 text-center text-sm text-gray-500">
                                                 אין תזרימים לתקופה זו
                                             </td>
                                         </tr>
@@ -896,7 +1069,10 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                                     v-for="day in availableTransactionDays"
                                                     :key="day.key"
                                                     type="button"
-                                                    class="flex w-full items-center justify-between rounded px-2 py-1 text-sm text-gray-700 hover:bg-gray-100"
+                                                    :class="[
+                                                        'flex w-full items-center justify-between rounded px-2 py-1 text-sm hover:bg-gray-100',
+                                                        day.hasTransactions ? 'text-gray-700' : 'text-gray-400'
+                                                    ]"
                                                     @click.stop="selectTransactionDay(day.key)"
                                                 >
                                                     {{ day.label }}
@@ -910,7 +1086,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                         type="button"
                                         class="inline-flex items-center rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700 transition-colors hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
                                         :disabled="!hasTransactionSelection"
-                                        @click="openBulkDuplicateModal"
+                                        @click="openBulkDuplicateModal('transactions')"
                                     >
                                         📄 שכפל נבחרים
                                         <span v-if="selectedTransactionsCount" class="ml-1">({{ selectedTransactionsCount }})</span>
@@ -919,7 +1095,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                         type="button"
                                         class="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                                         :disabled="!hasTransactionSelection || isBulkDeleting"
-                                        @click="confirmBulkDelete"
+                                        @click="confirmBulkDelete('transactions')"
                                     >
                                         <svg
                                             v-if="isBulkDeleting"
@@ -971,6 +1147,16 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                                             :disabled="!selectedAccountRow">
                                                         <span>תאריך</span>
                                                         <span v-if="selectedAccountRow && transactionSortIcon('date')" class="text-xs">{{ transactionSortIcon('date') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    <button type="button"
+                                                            class="w-full flex flex-row-reverse items-center justify-between gap-1 text-right hover:text-indigo-500 disabled:cursor-not-allowed"
+                                                            :class="isTransactionColumnSorted('posting_date') ? 'text-indigo-600' : 'text-gray-600'"
+                                                            @click="toggleTransactionSort('posting_date')"
+                                                            :disabled="!selectedAccountRow">
+                                                        <span>תאריך חיוב</span>
+                                                        <span v-if="selectedAccountRow && transactionSortIcon('posting_date')" class="text-xs">{{ transactionSortIcon('posting_date') }}</span>
                                                     </button>
                                                 </th>
                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1030,6 +1216,9 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                                     {{ new Date(transaction.transaction_date).toLocaleDateString('he-IL') }}
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                                                    {{ transaction.posting_date ? new Date(transaction.posting_date).toLocaleDateString('he-IL') : '-' }}
+                                                </td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                                                     {{ transaction.description }}
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
@@ -1082,7 +1271,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                                 </td>
                                             </tr>
                                             <tr v-if="filteredTransactions.length === 0">
-                                                <td colspan="7" class="px-6 py-4 text-center text-sm text-gray-500">
+                                                <td colspan="8" class="px-6 py-4 text-center text-sm text-gray-500">
                                                     אין עסקאות למקור התזרים הזה
                                                 </td>
                                             </tr>
@@ -1103,6 +1292,8 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
             :categories="props.categoriesWithBudgets"
             :cash-flow-sources="props.cashFlowSources"
             :budgets="[]"
+            :current-year="selectedYear"
+            :current-month="selectedMonth"
             @close="closeTransactionModal"
             @transaction-added="handleTransactionSaved"
             @transaction-updated="handleTransactionSaved"
@@ -1111,9 +1302,9 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
 
         <Modal :show="isBulkDuplicateModalOpen" @close="closeBulkDuplicateModal">
             <div class="space-y-4 p-6">
-                <h2 class="text-lg font-semibold text-gray-900">שכפול תזרימים נבחרים</h2>
+                <h2 class="text-lg font-semibold text-gray-900">שכפול פריטים נבחרים</h2>
                 <p class="text-sm text-gray-600">
-                    בחר תאריך יעד לשכפול {{ selectedTransactionsCount }} תזרימים שנבחרו. התזרימים החדשים ישמרו על פרטי המקור, כולל קטגוריות ומקורות תזרים.
+                    בחר תאריך יעד לשכפול {{ bulkSelectionCount }} {{ bulkSelectionLabel }} שנבחרו. התזרימים החדשים ישמרו על פרטי המקור, כולל קטגוריות ומקורות תזרים.
                 </p>
                 <div class="space-y-2">
                     <label for="bulk-duplicate-date" class="block text-sm font-medium text-gray-700">תאריך חדש</label>

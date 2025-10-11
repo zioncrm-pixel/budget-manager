@@ -101,6 +101,20 @@
                 </div>
 
                 <div>
+                    <InputLabel for="posting_date" value="תאריך חיוב (אופציונלי)" />
+                    <TextInput
+                        id="posting_date"
+                        v-model="form.posting_date"
+                        type="date"
+                        class="mt-1 block w-full"
+                    />
+                    <p class="mt-1 text-xs text-gray-500">
+                        ישמש להצגה בלבד (למשל תאריך חיוב בכרטיס אשראי). אם השדה ריק, יוצג '-' בפירוט העסקאות.
+                    </p>
+                    <InputError :message="form.errors.posting_date" class="mt-2" />
+                </div>
+
+                <div>
                     <InputLabel for="description" value="תיאור" />
                     <TextInput
                         id="description"
@@ -204,6 +218,19 @@ import InputError from './InputError.vue'
 import PrimaryButton from './PrimaryButton.vue'
 import SecondaryButton from './SecondaryButton.vue'
 
+const formatDateForInput = (value) => {
+    if (!value) return new Date().toISOString().split('T')[0]
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) {
+        const parts = String(value).split('-')
+        if (parts.length === 3) {
+            return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`
+        }
+        return new Date().toISOString().split('T')[0]
+    }
+    return date.toISOString().split('T')[0]
+}
+
 const props = defineProps({
     show: {
         type: Boolean,
@@ -229,6 +256,14 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    currentYear: {
+        type: [Number, String],
+        default: null,
+    },
+    currentMonth: {
+        type: [Number, String],
+        default: null,
+    },
 })
 
 const emit = defineEmits(['close', 'transaction-added', 'transaction-updated', 'transaction-deleted'])
@@ -237,6 +272,25 @@ const isLoading = ref(false)
 const isDeleting = ref(false)
 const budgetWarning = ref('')
 
+const getContextYear = () => {
+    const value = Number(props.currentYear)
+    return Number.isFinite(value) && value > 0 ? value : new Date().getFullYear()
+}
+
+const getContextMonth = () => {
+    const value = Number(props.currentMonth)
+    return Number.isFinite(value) && value >= 1 && value <= 12 ? value : (new Date().getMonth() + 1)
+}
+
+const getDefaultContextDate = () => {
+    const year = getContextYear()
+    const month = getContextMonth()
+    const today = new Date()
+    const lastDay = new Date(year, month, 0).getDate()
+    const day = Math.min(today.getDate(), lastDay)
+    return formatDateForInput(new Date(year, month - 1, day))
+}
+
 const isEditMode = computed(() => props.mode === 'edit' && props.transaction)
 
 const form = useForm({
@@ -244,7 +298,8 @@ const form = useForm({
     category_id: '',
     cash_flow_source_id: '',
     amount: '',
-    transaction_date: new Date().toISOString().split('T')[0],
+    transaction_date: getDefaultContextDate(),
+    posting_date: getDefaultContextDate(),
     description: '',
     notes: '',
     reference_number: '',
@@ -266,9 +321,8 @@ const filteredCashFlowSources = computed(() => {
 const currentBudget = computed(() => {
     if (!form.category_id || !form.amount) return null
 
-    const today = new Date()
-    const year = today.getFullYear()
-    const month = today.getMonth() + 1
+    const year = getContextYear()
+    const month = getContextMonth()
 
     return props.budgets.find(
         (budget) =>
@@ -299,6 +353,7 @@ const initializeForm = () => {
             cash_flow_source_id: transaction.cash_flow_source_id ? String(transaction.cash_flow_source_id) : '',
             amount: transaction.amount ? Number(transaction.amount).toFixed(2) : '',
             transaction_date: formatDateForInput(transaction.transaction_date),
+            posting_date: formatDateForInput(transaction.posting_date || transaction.transaction_date),
             description: transaction.description || '',
             notes: transaction.notes || '',
             reference_number: transaction.reference_number || '',
@@ -309,7 +364,8 @@ const initializeForm = () => {
             category_id: '',
             cash_flow_source_id: '',
             amount: '',
-            transaction_date: new Date().toISOString().split('T')[0],
+            transaction_date: getDefaultContextDate(),
+            posting_date: getDefaultContextDate(),
             description: '',
             notes: '',
             reference_number: '',
@@ -319,19 +375,6 @@ const initializeForm = () => {
     form.reset()
     budgetWarning.value = ''
     checkBudgetWarning()
-}
-
-const formatDateForInput = (value) => {
-    if (!value) return new Date().toISOString().split('T')[0]
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) {
-        const parts = value.split('-')
-        if (parts.length === 3) {
-            return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`
-        }
-        return new Date().toISOString().split('T')[0]
-    }
-    return date.toISOString().split('T')[0]
 }
 
 const checkBudgetWarning = () => {
@@ -395,6 +438,7 @@ const submitForm = async () => {
         amount: data.amount ? parseFloat(data.amount) : data.amount,
         category_id: data.category_id || null,
         cash_flow_source_id: data.cash_flow_source_id || null,
+        posting_date: data.posting_date || null,
     }))
 
     const options = {

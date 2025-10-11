@@ -57,6 +57,12 @@ const showingNavigationDropdown = ref(false);
                                 >
                                     מקורות תזרים
                                 </NavLink>
+                                <NavLink
+                                    :href="route('cashflow.import.index')"
+                                    :active="route().current('cashflow.import.index')"
+                                >
+                                    ייבוא תזרים
+                                </NavLink>
                             </div>
                         </div>
 
@@ -181,6 +187,12 @@ const showingNavigationDropdown = ref(false);
                             :active="route().current('cashflow.sources.index')"
                         >
                             מקורות תזרים
+                        </ResponsiveNavLink>
+                        <ResponsiveNavLink
+                            :href="route('cashflow.import.index')"
+                            :active="route().current('cashflow.import.index')"
+                        >
+                            ייבוא תזרים
                         </ResponsiveNavLink>
                     </div>
 

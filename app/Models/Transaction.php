@@ -15,6 +15,7 @@ class Transaction extends Model
         'amount',
         'type',
         'transaction_date',
+        'posting_date',
         'description',
         'notes',
         'reference_number',
@@ -25,6 +26,7 @@ class Transaction extends Model
 
     protected $casts = [
         'transaction_date' => 'date',
+        'posting_date' => 'date',
         'amount' => 'decimal:2',
     ];
 

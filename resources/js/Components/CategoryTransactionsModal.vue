@@ -164,6 +164,8 @@
             :categories="categories"
             :cash-flow-sources="cashFlowSources"
             :budgets="budgets"
+            :current-year="year"
+            :current-month="month"
             @close="closeTransactionModal"
             @transaction-added="reloadTransactions"
             @transaction-updated="reloadTransactions"

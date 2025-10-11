@@ -239,6 +239,8 @@ const formatCurrency = (amount) => {
             :categories="props.categoriesWithBudgets"
             :cash-flow-sources="props.cashFlowSources"
             :budgets="[]"
+            :current-year="selectedYear"
+            :current-month="selectedMonth"
             @close="closeTransactionModal"
             @transaction-added="onTransactionAdded"
         />

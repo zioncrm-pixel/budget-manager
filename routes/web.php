@@ -6,6 +6,7 @@ use App\Http\Controllers\BudgetController;
 use App\Http\Controllers\BudgetManagementController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\CashFlowSourceController;
+use App\Http\Controllers\CashflowImportController;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -27,6 +28,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/cashflow', [DashboardController::class, 'cashflow'])->name('cashflow.index');
     Route::get('/budgets/overview', [DashboardController::class, 'budgets'])->name('budgets.overview');
     Route::get('/cashflow/sources', [DashboardController::class, 'cashflowSources'])->name('cashflow.sources.index');
+    Route::get('/cashflow/import', [CashflowImportController::class, 'index'])->name('cashflow.import.index');
+    Route::post('/cashflow/import/upload', [CashflowImportController::class, 'upload'])->name('cashflow.import.upload');
+    Route::post('/cashflow/import/transform', [CashflowImportController::class, 'transform'])->name('cashflow.import.transform');
+    Route::post('/cashflow/import/commit', [CashflowImportController::class, 'commit'])->name('cashflow.import.commit');
 
     Route::post('/budgets/manage', [BudgetManagementController::class, 'store'])->name('budgets.manage.store');
     Route::put('/budgets/manage/{budget}', [BudgetManagementController::class, 'update'])->whereNumber('budget')->name('budgets.manage.update');
