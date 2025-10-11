@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
 
 class TransactionController extends Controller
@@ -320,6 +321,56 @@ class TransactionController extends Controller
         }
     }
 
+    public function duplicate(Request $request, Transaction $transaction): RedirectResponse
+    {
+        abort_if($transaction->user_id !== Auth::id(), 403);
+
+        $data = $request->validate([
+            'year' => ['required', 'integer'],
+            'month' => ['required', 'integer', 'between:1,12'],
+        ]);
+
+        $user = $request->user();
+
+        DB::beginTransaction();
+
+        try {
+            $originalDate = $transaction->transaction_date instanceof Carbon
+                ? $transaction->transaction_date->copy()
+                : Carbon::parse($transaction->transaction_date);
+
+            $targetMonth = Carbon::create($data['year'], $data['month'], 1)->startOfDay();
+            $day = min($originalDate->day, $targetMonth->copy()->endOfMonth()->day);
+            $newDate = $targetMonth->copy()->day($day)->setTime(
+                (int) $originalDate->format('H'),
+                (int) $originalDate->format('i'),
+                (int) $originalDate->format('s')
+            );
+
+            $newTransaction = $transaction->replicate();
+            $newTransaction->transaction_date = $newDate;
+            $newTransaction->save();
+
+            if ($newTransaction->type === 'expense' && $newTransaction->category_id) {
+                $this->updateBudget($user->id, $newTransaction->category_id, $newTransaction->transaction_date);
+            }
+
+            if ($newTransaction->cash_flow_source_id) {
+                $this->updateCashFlowSourceBudget($user->id, $newTransaction->cash_flow_source_id, $newTransaction->transaction_date);
+            }
+
+            DB::commit();
+
+            return back()->with('success', 'התזרים שוכפל בהצלחה');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return back()->withErrors([
+                'error' => 'שגיאה בשכפול התזרים: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
     /**
      * עדכון תקציב לקטגוריה ותאריך מסוימים
      */
@@ -356,6 +407,175 @@ class TransactionController extends Controller
 
         if ($budget) {
             $budget->updateSpentAmount();
+        }
+    }
+
+    public function duplicateBulk(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'transaction_ids' => ['required', 'array', 'min:1'],
+            'transaction_ids.*' => ['integer', 'exists:transactions,id'],
+            'date' => ['required', 'date'],
+        ]);
+
+        $user = $request->user();
+
+        $transactions = Transaction::where('user_id', $user->id)
+            ->whereIn('id', $data['transaction_ids'])
+            ->get();
+
+        if ($transactions->count() !== count($data['transaction_ids'])) {
+            return back()->withErrors([
+                'transaction_ids' => 'נמצאו תזרימים שאינם זמינים לשכפול.',
+            ]);
+        }
+
+        $targetDate = Carbon::parse($data['date']);
+
+        DB::beginTransaction();
+
+        try {
+            $categoryUpdates = [];
+            $cashFlowUpdates = [];
+
+            foreach ($transactions as $transaction) {
+                $originalDate = $transaction->transaction_date instanceof Carbon
+                    ? $transaction->transaction_date->copy()
+                    : Carbon::parse($transaction->transaction_date);
+
+                $newDate = $targetDate->copy()->setTime(
+                    (int) $originalDate->format('H'),
+                    (int) $originalDate->format('i'),
+                    (int) $originalDate->format('s')
+                );
+
+                $newTransaction = $transaction->replicate();
+                $newTransaction->transaction_date = $newDate;
+                $newTransaction->save();
+
+                if ($newTransaction->type === 'expense' && $newTransaction->category_id) {
+                    $categoryUpdates[] = [
+                        'category_id' => $newTransaction->category_id,
+                        'date' => $newTransaction->transaction_date,
+                    ];
+                }
+
+                if ($newTransaction->cash_flow_source_id) {
+                    $cashFlowUpdates[] = [
+                        'cash_flow_source_id' => $newTransaction->cash_flow_source_id,
+                        'date' => $newTransaction->transaction_date,
+                    ];
+                }
+            }
+
+            collect($categoryUpdates)
+                ->unique(function ($item) {
+                    $carbon = $item['date'] instanceof Carbon ? $item['date'] : Carbon::parse($item['date']);
+
+                    return $item['category_id'] . '-' . $carbon->format('Y-m');
+                })
+                ->each(function ($item) use ($user) {
+                    $this->updateBudget($user->id, $item['category_id'], $item['date']);
+                });
+
+            collect($cashFlowUpdates)
+                ->unique(function ($item) {
+                    $carbon = $item['date'] instanceof Carbon ? $item['date'] : Carbon::parse($item['date']);
+
+                    return $item['cash_flow_source_id'] . '-' . $carbon->format('Y-m');
+                })
+                ->each(function ($item) use ($user) {
+                    $this->updateCashFlowSourceBudget($user->id, $item['cash_flow_source_id'], $item['date']);
+                });
+
+            DB::commit();
+
+            return back()->with('success', 'התזרימים שוכפלו בהצלחה');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return back()->withErrors([
+                'error' => 'שגיאה בשכפול התזרימים: ' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    public function deleteBulk(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'transaction_ids' => ['required', 'array', 'min:1'],
+            'transaction_ids.*' => ['integer', 'exists:transactions,id'],
+        ]);
+
+        $user = $request->user();
+
+        $transactions = Transaction::where('user_id', $user->id)
+            ->whereIn('id', $data['transaction_ids'])
+            ->get();
+
+        if ($transactions->count() !== count($data['transaction_ids'])) {
+            return back()->withErrors([
+                'transaction_ids' => 'נמצאו תזרימים שאינם זמינים למחיקה.',
+            ]);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $categoryUpdates = [];
+            $cashFlowUpdates = [];
+
+            foreach ($transactions as $transaction) {
+                $date = $transaction->transaction_date instanceof Carbon
+                    ? $transaction->transaction_date->copy()
+                    : Carbon::parse($transaction->transaction_date);
+
+                if ($transaction->type === 'expense' && $transaction->category_id) {
+                    $categoryUpdates[] = [
+                        'category_id' => $transaction->category_id,
+                        'date' => $date,
+                    ];
+                }
+
+                if ($transaction->cash_flow_source_id) {
+                    $cashFlowUpdates[] = [
+                        'cash_flow_source_id' => $transaction->cash_flow_source_id,
+                        'date' => $date,
+                    ];
+                }
+
+                $transaction->delete();
+            }
+
+            collect($categoryUpdates)
+                ->unique(function ($item) {
+                    $carbon = $item['date'] instanceof Carbon ? $item['date'] : Carbon::parse($item['date']);
+
+                    return $item['category_id'] . '-' . $carbon->format('Y-m');
+                })
+                ->each(function ($item) use ($user) {
+                    $this->updateBudget($user->id, $item['category_id'], $item['date']);
+                });
+
+            collect($cashFlowUpdates)
+                ->unique(function ($item) {
+                    $carbon = $item['date'] instanceof Carbon ? $item['date'] : Carbon::parse($item['date']);
+
+                    return $item['cash_flow_source_id'] . '-' . $carbon->format('Y-m');
+                })
+                ->each(function ($item) use ($user) {
+                    $this->updateCashFlowSourceBudget($user->id, $item['cash_flow_source_id'], $item['date']);
+                });
+
+            DB::commit();
+
+            return back()->with('success', 'התזרימים נמחקו בהצלחה');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return back()->withErrors([
+                'error' => 'שגיאה במחיקת התזרימים: ' . $e->getMessage(),
+            ]);
         }
     }
 }

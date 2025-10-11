@@ -174,6 +174,7 @@ const duplicateSource = (source) => {
             year: Number(selectedYear.value),
             month: Number(selectedMonth.value),
             planned_amount: source.budget?.planned_amount ?? null,
+            with_transactions: false,
         },
         {
             preserveScroll: true,

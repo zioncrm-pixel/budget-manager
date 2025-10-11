@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Budget;
 use App\Models\CashFlowSource;
 use App\Models\CashFlowSourceBudget;
 use App\Models\Transaction;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -104,11 +106,13 @@ class CashFlowSourceController extends Controller
             'year' => ['required', 'integer'],
             'month' => ['required', 'integer', 'between:1,12'],
             'planned_amount' => ['nullable', 'numeric', 'min:0'],
+            'with_transactions' => ['sometimes', 'boolean'],
         ]);
 
         $user = $request->user();
+        $duplicateTransactions = $request->boolean('with_transactions', false);
 
-        DB::transaction(function () use ($user, $cashFlowSource, $data): void {
+        DB::transaction(function () use ($user, $cashFlowSource, $data, $duplicateTransactions): void {
             $newName = $this->generateDuplicateSourceName($user->id, $cashFlowSource->name);
 
             $newSource = CashFlowSource::create([
@@ -121,18 +125,90 @@ class CashFlowSourceController extends Controller
                 'is_active' => $cashFlowSource->is_active,
             ]);
 
-            if (array_key_exists('planned_amount', $data) && $data['planned_amount'] !== null) {
+            $plannedAmount = $data['planned_amount'] ?? null;
+
+            if ($plannedAmount === null) {
+                $existingBudget = CashFlowSourceBudget::where('user_id', $user->id)
+                    ->where('cash_flow_source_id', $cashFlowSource->id)
+                    ->where('year', (int) $data['year'])
+                    ->where('month', (int) $data['month'])
+                    ->first();
+
+                if ($existingBudget) {
+                    $plannedAmount = $existingBudget->planned_amount;
+                }
+            }
+
+            if ($plannedAmount !== null) {
                 $budget = CashFlowSourceBudget::create([
                     'user_id' => $user->id,
                     'cash_flow_source_id' => $newSource->id,
                     'year' => (int) $data['year'],
                     'month' => (int) $data['month'],
-                    'planned_amount' => $data['planned_amount'],
+                    'planned_amount' => $plannedAmount,
                     'spent_amount' => 0,
-                    'remaining_amount' => $data['planned_amount'],
+                    'remaining_amount' => $plannedAmount,
                 ]);
 
                 $budget->updateSpentAmount();
+            }
+
+            if ($duplicateTransactions) {
+                $year = (int) $data['year'];
+                $month = (int) $data['month'];
+
+                $transactions = Transaction::where('user_id', $user->id)
+                    ->where('cash_flow_source_id', $cashFlowSource->id)
+                    ->whereYear('transaction_date', $year)
+                    ->whereMonth('transaction_date', $month)
+                    ->get();
+
+                $categoryUpdates = [];
+                $assignmentDates = [];
+
+                foreach ($transactions as $transaction) {
+                    $originalDate = $transaction->transaction_date instanceof Carbon
+                        ? $transaction->transaction_date->copy()
+                        : Carbon::parse($transaction->transaction_date);
+
+                    $targetMonth = Carbon::create($year, $month, 1)->startOfDay();
+                    $day = min($originalDate->day, $targetMonth->copy()->endOfMonth()->day);
+                    $newDate = $targetMonth->copy()->day($day)->setTime(
+                        (int) $originalDate->format('H'),
+                        (int) $originalDate->format('i'),
+                        (int) $originalDate->format('s')
+                    );
+
+                    $newTransaction = $transaction->replicate();
+                    $newTransaction->cash_flow_source_id = $newSource->id;
+                    $newTransaction->transaction_date = $newDate;
+                    $newTransaction->save();
+
+                    if ($newTransaction->category_id) {
+                        $categoryUpdates[] = [
+                            'category_id' => $newTransaction->category_id,
+                            'date' => $newTransaction->transaction_date,
+                        ];
+                    }
+
+                    $assignmentDates[] = $newTransaction->transaction_date;
+                }
+
+                if (!empty($assignmentDates)) {
+                    $this->refreshBudgetsForAssignments($newSource, $assignmentDates);
+                }
+
+                if (!empty($categoryUpdates)) {
+                    collect($categoryUpdates)
+                        ->unique(function ($item) {
+                            $carbon = $item['date'] instanceof Carbon ? $item['date'] : Carbon::parse($item['date']);
+
+                            return $item['category_id'] . '-' . $carbon->format('Y-m');
+                        })
+                        ->each(function ($item) use ($user) {
+                            $this->refreshCategoryBudget($user->id, $item['category_id'], $item['date']);
+                        });
+                }
             }
         });
 
@@ -408,6 +484,25 @@ class CashFlowSourceController extends Controller
             if ($budget) {
                 $budget->updateSpentAmount();
             }
+        }
+    }
+
+    private function refreshCategoryBudget(int $userId, int $categoryId, $date): void
+    {
+        if (!$categoryId || !$date) {
+            return;
+        }
+
+        $carbon = $date instanceof Carbon ? $date : Carbon::parse($date);
+
+        $budget = Budget::where('user_id', $userId)
+            ->where('category_id', $categoryId)
+            ->where('year', $carbon->year)
+            ->where('month', $carbon->month)
+            ->first();
+
+        if ($budget) {
+            $budget->updateSpentAmount();
         }
     }
 

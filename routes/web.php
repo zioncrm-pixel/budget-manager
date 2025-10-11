@@ -63,9 +63,12 @@ Route::prefix('transactions')->middleware(['auth', 'verified'])->group(function 
     Route::get('/', [TransactionController::class, 'index'])->name('transactions.index');
     Route::get('/create', [TransactionController::class, 'create'])->name('transactions.create');
     Route::post('/', [TransactionController::class, 'store'])->name('transactions.store');
+    Route::post('/duplicate/bulk', [TransactionController::class, 'duplicateBulk'])->name('transactions.duplicate.bulk');
+    Route::post('/delete/bulk', [TransactionController::class, 'deleteBulk'])->name('transactions.delete.bulk');
     Route::get('/{transaction}', [TransactionController::class, 'show'])->name('transactions.show');
     Route::get('/{transaction}/edit', [TransactionController::class, 'edit'])->name('transactions.edit');
     Route::put('/{transaction}', [TransactionController::class, 'update'])->name('transactions.update');
+    Route::post('/{transaction}/duplicate', [TransactionController::class, 'duplicate'])->whereNumber('transaction')->name('transactions.duplicate');
     Route::delete('/{transaction}', [TransactionController::class, 'destroy'])->name('transactions.destroy');
 });
 

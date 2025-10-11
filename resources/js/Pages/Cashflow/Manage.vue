@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import TransactionAddModal from '@/Components/TransactionAddModal.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
+import Modal from '@/Components/Modal.vue'
 
 const props = defineProps({
     user: Object,
@@ -49,6 +50,18 @@ const defaultTransactionSort = () => ({ key: 'date', direction: 'desc' })
 
 const accountSort = ref(defaultAccountSort())
 const transactionSort = ref({ key: null, direction: null })
+const duplicatingSourceId = ref(null)
+const duplicatingTransactionId = ref(null)
+const selectedTransactionIds = ref([])
+const isBulkDuplicateModalOpen = ref(false)
+const bulkDuplicateDate = ref('')
+const bulkDuplicateError = ref(null)
+const isBulkSubmitting = ref(false)
+const isBulkDeleting = ref(false)
+const transactionDayFilter = ref(null)
+const isDayFilterOpen = ref(false)
+const dayFilterContainer = ref(null)
+const selectAllTransactionsCheckbox = ref(null)
 
 const navigateToPeriod = (year, month) => {
     router.visit(`/cashflow?year=${year}&month=${month}`, {
@@ -120,6 +133,100 @@ const transactionSorters = {
     amount: (transaction) => Number(transaction.amount || 0),
     status: (transaction) => (transaction.status || '').toString().toLowerCase(),
 }
+
+const transactionsForSelectedRow = computed(() => {
+    if (!selectedAccountRow.value) return []
+
+    let items = []
+
+    if (selectedAccountRow.value.type === 'cash_flow_source') {
+        const allTransactions = props.allTransactions || []
+        items = allTransactions.filter(transaction =>
+            transaction.cash_flow_source_id === selectedAccountRow.value.cash_flow_source_id &&
+            transaction.type === selectedAccountRow.value.transaction_type
+        )
+    } else if (selectedAccountRow.value.type === 'individual_transaction') {
+        items = [selectedAccountRow.value.transaction_data]
+    }
+
+    return sortTransactions(items)
+})
+
+const getTransactionDateKey = (value) => {
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.valueOf())) {
+        return null
+    }
+
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+
+    return `${year}-${month}-${day}`
+}
+
+const filteredTransactions = computed(() => {
+    const items = transactionsForSelectedRow.value
+
+    if (transactionDayFilter.value) {
+        return items.filter(transaction => getTransactionDateKey(transaction.transaction_date) === transactionDayFilter.value)
+    }
+
+    return items
+})
+
+const availableTransactionDays = computed(() => {
+    const items = transactionsForSelectedRow.value
+    const unique = new Set()
+
+    items.forEach((transaction) => {
+        const key = getTransactionDateKey(transaction.transaction_date)
+        if (key) {
+            unique.add(key)
+        }
+    })
+
+    return Array.from(unique)
+        .sort((a, b) => (a > b ? 1 : -1))
+        .map((key) => ({
+            key,
+            label: new Date(key).toLocaleDateString('he-IL'),
+        }))
+})
+
+const transactionDayLabel = computed(() => {
+    if (!transactionDayFilter.value) {
+        return 'כל הימים'
+    }
+
+    return new Date(transactionDayFilter.value).toLocaleDateString('he-IL')
+})
+
+const formatDateForInput = (date) => {
+    if (!(date instanceof Date) || Number.isNaN(date.valueOf())) {
+        return ''
+    }
+
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+
+    return `${year}-${month}-${day}`
+}
+
+const bulkMinDate = computed(() => formatDateForInput(new Date(selectedYear.value, selectedMonth.value - 1, 1)))
+const bulkMaxDate = computed(() => formatDateForInput(new Date(selectedYear.value, selectedMonth.value, 0)))
+const hasTransactionSelection = computed(() => selectedTransactionIds.value.length > 0)
+const selectedTransactionsCount = computed(() => selectedTransactionIds.value.length)
+const areAllTransactionsSelected = computed(() => {
+    const transactions = filteredTransactions.value
+    if (!transactions.length) {
+        return false
+    }
+
+    const selectedSet = new Set(selectedTransactionIds.value)
+    return transactions.every(transaction => selectedSet.has(transaction.id))
+})
 
 const compareValues = (a, b) => {
     if (a === b) return 0
@@ -203,24 +310,6 @@ const isTransactionColumnSorted = (key) => transactionSort.value.key === key && 
 
 const sortedAccountStatementRows = computed(() => sortAccountRows(localAccountStatementRows.value))
 
-const filteredTransactions = computed(() => {
-    if (!selectedAccountRow.value) return []
-
-    let items = []
-
-    if (selectedAccountRow.value.type === 'cash_flow_source') {
-        const allTransactions = props.allTransactions || []
-        items = allTransactions.filter(transaction => 
-            transaction.cash_flow_source_id === selectedAccountRow.value.cash_flow_source_id &&
-            transaction.type === selectedAccountRow.value.transaction_type
-        )
-    } else if (selectedAccountRow.value.type === 'individual_transaction') {
-        items = [selectedAccountRow.value.transaction_data]
-    }
-
-    return sortTransactions(items)
-})
-
 const formatCurrency = (amount) => {
     return new Intl.NumberFormat('he-IL', {
         minimumFractionDigits: 2,
@@ -244,6 +333,7 @@ const getTransactionTypeName = (type) => {
 
 const selectAccountRow = (row) => {
     selectedAccountRow.value = row
+    selectedTransactionIds.value = []
     if (!transactionSort.value.key || !transactionSort.value.direction) {
         transactionSort.value = defaultTransactionSort()
     }
@@ -252,6 +342,9 @@ const selectAccountRow = (row) => {
 const clearSelection = () => {
     selectedAccountRow.value = null
     transactionSort.value = { key: null, direction: null }
+    selectedTransactionIds.value = []
+    transactionDayFilter.value = null
+    isDayFilterOpen.value = false
 }
 
 const openCreateModal = () => {
@@ -293,6 +386,191 @@ const confirmDelete = (transaction) => {
     })
 }
 
+const duplicateTransaction = (transaction) => {
+    if (!transaction?.id) {
+        return
+    }
+
+    duplicatingTransactionId.value = transaction.id
+
+    router.post(route('transactions.duplicate', transaction.id), {
+        year: Number(selectedYear.value),
+        month: Number(selectedMonth.value),
+    }, {
+        preserveScroll: true,
+        onSuccess: () => navigateToPeriod(selectedYear.value, selectedMonth.value),
+        onFinish: () => {
+            duplicatingTransactionId.value = null
+        },
+    })
+}
+
+const duplicateCashFlowSource = (row) => {
+    const sourceId = row?.cash_flow_source_id
+    if (!sourceId) {
+        return
+    }
+
+    duplicatingSourceId.value = sourceId
+
+    router.post(route('cashflow.sources.duplicate', sourceId), {
+        year: Number(selectedYear.value),
+        month: Number(selectedMonth.value),
+        with_transactions: true,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => navigateToPeriod(selectedYear.value, selectedMonth.value),
+        onFinish: () => {
+            duplicatingSourceId.value = null
+        },
+    })
+}
+
+const isDuplicatingTransaction = (id) => duplicatingTransactionId.value === id
+const isDuplicatingSource = (id) => duplicatingSourceId.value === id
+const isTransactionSelected = (id) => selectedTransactionIds.value.includes(id)
+const toggleTransactionSelection = (id, checked) => {
+    if (!id) {
+        return
+    }
+
+    const set = new Set(selectedTransactionIds.value)
+    if (checked) {
+        set.add(id)
+    } else {
+        set.delete(id)
+    }
+
+    selectedTransactionIds.value = Array.from(set)
+}
+
+const toggleSelectAllTransactions = (checked) => {
+    if (checked) {
+        selectedTransactionIds.value = filteredTransactions.value.map(transaction => transaction.id)
+    } else {
+        selectedTransactionIds.value = []
+    }
+}
+
+const getDefaultBulkDuplicateDate = () => {
+    const today = new Date()
+    if (today.getFullYear() !== selectedYear.value || (today.getMonth() + 1) !== selectedMonth.value) {
+        return bulkMinDate.value
+    }
+
+    const monthEndDay = new Date(selectedYear.value, selectedMonth.value, 0).getDate()
+    const day = Math.min(today.getDate(), monthEndDay)
+    return formatDateForInput(new Date(selectedYear.value, selectedMonth.value - 1, day))
+}
+
+const openBulkDuplicateModal = () => {
+    if (!hasTransactionSelection.value) {
+        return
+    }
+
+    bulkDuplicateError.value = null
+    bulkDuplicateDate.value = getDefaultBulkDuplicateDate()
+    isBulkDuplicateModalOpen.value = true
+}
+
+const closeBulkDuplicateModal = () => {
+    isBulkDuplicateModalOpen.value = false
+    bulkDuplicateError.value = null
+}
+
+const submitBulkDuplicate = () => {
+    if (!hasTransactionSelection.value || !bulkDuplicateDate.value) {
+        bulkDuplicateError.value = 'בחר תאריך לשכפול'
+        return
+    }
+
+    isBulkSubmitting.value = true
+    bulkDuplicateError.value = null
+
+    router.post(route('transactions.duplicate.bulk'), {
+        transaction_ids: selectedTransactionIds.value,
+        date: bulkDuplicateDate.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            closeBulkDuplicateModal()
+            selectedTransactionIds.value = []
+            navigateToPeriod(selectedYear.value, selectedMonth.value)
+        },
+        onError: (errors) => {
+            bulkDuplicateError.value = errors.date || errors.transaction_ids || errors.error || 'אירעה שגיאה בשכפול התזרימים'
+        },
+        onFinish: () => {
+            isBulkSubmitting.value = false
+        },
+    })
+}
+
+const confirmBulkDelete = () => {
+    if (!hasTransactionSelection.value) {
+        return
+    }
+
+    if (!confirm('למחוק את כל התזרימים שנבחרו? הפעולה בלתי הפיכה.')) {
+        return
+    }
+
+    isBulkDeleting.value = true
+
+    router.post(route('transactions.delete.bulk'), {
+        transaction_ids: selectedTransactionIds.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            selectedTransactionIds.value = []
+            navigateToPeriod(selectedYear.value, selectedMonth.value)
+        },
+        onError: (errors) => {
+            alert(errors.transaction_ids || errors.error || 'אירעה שגיאה במחיקת התזרימים')
+        },
+        onFinish: () => {
+            isBulkDeleting.value = false
+        },
+    })
+}
+
+const toggleDayFilter = () => {
+    if (!availableTransactionDays.value.length) {
+        return
+    }
+
+    isDayFilterOpen.value = !isDayFilterOpen.value
+}
+
+const selectTransactionDay = (key) => {
+    transactionDayFilter.value = key
+    isDayFilterOpen.value = false
+}
+
+const clearTransactionDayFilter = () => {
+    transactionDayFilter.value = null
+    isDayFilterOpen.value = false
+}
+
+const handleDayFilterOutsideClick = (event) => {
+    if (!isDayFilterOpen.value) {
+        return
+    }
+
+    const container = dayFilterContainer.value
+    if (container && !container.contains(event.target)) {
+        isDayFilterOpen.value = false
+    }
+}
+
+onMounted(() => {
+    document.addEventListener('click', handleDayFilterOutsideClick)
+})
+
+onBeforeUnmount(() => {
+    document.removeEventListener('click', handleDayFilterOutsideClick)
+})
+
 watch(() => props.accountStatementRows, (newRows) => {
     if (newRows) {
         const previousSelectionId = selectedAccountRow.value?.id || null
@@ -307,6 +585,42 @@ watch(() => props.accountStatementRows, (newRows) => {
 watch(selectedAccountRow, (row) => {
     if (!row) {
         transactionSort.value = { key: null, direction: null }
+        selectedTransactionIds.value = []
+        transactionDayFilter.value = null
+        isDayFilterOpen.value = false
+    } else {
+        selectedTransactionIds.value = []
+        transactionDayFilter.value = null
+        isDayFilterOpen.value = false
+    }
+})
+
+watch(filteredTransactions, (transactions) => {
+    const allowedIds = new Set((transactions || []).map(transaction => transaction.id))
+    selectedTransactionIds.value = selectedTransactionIds.value.filter(id => allowedIds.has(id))
+}, { immediate: true })
+
+watch([hasTransactionSelection, areAllTransactionsSelected], () => {
+    if (selectAllTransactionsCheckbox.value) {
+        selectAllTransactionsCheckbox.value.indeterminate = hasTransactionSelection.value && !areAllTransactionsSelected.value
+    }
+})
+
+watch(availableTransactionDays, (days) => {
+    if (transactionDayFilter.value && !days.some(day => day.key === transactionDayFilter.value)) {
+        transactionDayFilter.value = null
+    }
+})
+
+watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
+    if (!bulkDuplicateDate.value) {
+        return
+    }
+
+    if (bulkDuplicateDate.value < min) {
+        bulkDuplicateDate.value = min
+    } else if (bulkDuplicateDate.value > max) {
+        bulkDuplicateDate.value = max
     }
 })
 </script>
@@ -468,15 +782,52 @@ watch(selectedAccountRow, (row) => {
                                             </td>
                                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                                                 <div class="flex items-center justify-end space-x-2">
-                                                    <button v-if="row.can_add_transactions" 
+                                                    <template v-if="row.can_add_transactions">
+                                                        <button
+                                                            class="inline-flex items-center px-2 py-1 bg-white border border-green-200 text-green-600 hover:bg-green-50 rounded-md transition-colors duration-200 disabled:opacity-60"
+                                                            :disabled="isDuplicatingSource(row.cash_flow_source_id)"
+                                                            @click.stop="duplicateCashFlowSource(row)"
+                                                        >
+                                                            <svg
+                                                                v-if="isDuplicatingSource(row.cash_flow_source_id)"
+                                                                class="-ml-1 mr-1 h-3 w-3 animate-spin text-green-600"
+                                                                xmlns="http://www.w3.org/2000/svg"
+                                                                fill="none"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                                                            </svg>
+                                                            <span class="text-xs font-medium">שכפל מקור</span>
+                                                        </button>
+                                                        <button
                                                             @click.stop="openCreateModal"
-                                                            class="inline-flex items-center px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md transition-colors duration-200">
-                                                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                                                        </svg>
-                                                        <span class="text-xs font-medium">הוסף</span>
-                                                    </button>
+                                                            class="inline-flex items-center px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md transition-colors duration-200"
+                                                        >
+                                                            <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                                            </svg>
+                                                            <span class="text-xs font-medium">הוסף</span>
+                                                        </button>
+                                                    </template>
                                                     <template v-else>
+                                                        <button
+                                                            class="inline-flex items-center px-2 py-1 bg-white border border-green-200 text-green-600 hover:bg-green-50 rounded-md transition-colors duration-200 disabled:opacity-60"
+                                                            :disabled="isDuplicatingTransaction(row.transaction_data?.id)"
+                                                            @click.stop="duplicateTransaction(row.transaction_data)"
+                                                        >
+                                                            <svg
+                                                                v-if="isDuplicatingTransaction(row.transaction_data?.id)"
+                                                                class="-ml-1 mr-1 h-3 w-3 animate-spin text-green-600"
+                                                                xmlns="http://www.w3.org/2000/svg"
+                                                                fill="none"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                                                            </svg>
+                                                            📄<span class="sr-only">שכפל</span>
+                                                        </button>
                                                         <button
                                                             class="inline-flex items-center px-2 py-1 bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors duration-200"
                                                             @click.stop="openEditModal(row.transaction_data)"
@@ -504,7 +855,7 @@ watch(selectedAccountRow, (row) => {
                         </div>
 
                         <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200">
-                            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                            <div class="px-6 py-4 border-b border-gray-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <h3 class="text-lg font-medium text-gray-900 text-right">
                                     פירוט עסקאות
                                     <span v-if="selectedAccountRow" class="text-sm text-gray-500 mr-2">
@@ -513,13 +864,84 @@ watch(selectedAccountRow, (row) => {
                                         <span v-else>(תזרים בודד)</span>
                                     </span>
                                 </h3>
-                                <button 
-                                    v-if="selectedAccountRow"
-                                    @click="clearSelection"
-                                    class="text-sm text-gray-500 hover:text-gray-700 underline"
-                                >
-                                    נקה בחירה
-                                </button>
+                                <div v-if="selectedAccountRow" class="flex flex-wrap items-center gap-2">
+                                    <div ref="dayFilterContainer" class="relative">
+                                        <button
+                                            type="button"
+                                            class="inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                                            :class="transactionDayFilter ? 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'"
+                                            :disabled="!availableTransactionDays.length"
+                                            @click.stop="toggleDayFilter"
+                                        >
+                                            📅 {{ transactionDayLabel }}
+                                            <svg class="ml-2 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                                            </svg>
+                                        </button>
+
+                                        <div
+                                            v-if="isDayFilterOpen"
+                                            class="absolute z-20 mt-2 w-48 rounded-md border border-gray-200 bg-white p-2 text-right shadow-lg"
+                                        >
+                                            <button
+                                                type="button"
+                                                class="flex w-full items-center justify-between rounded px-2 py-1 text-sm text-gray-700 hover:bg-gray-100"
+                                                @click.stop="clearTransactionDayFilter"
+                                            >
+                                                כל הימים
+                                                <span v-if="!transactionDayFilter" class="text-xs text-indigo-600">נבחר</span>
+                                            </button>
+                                            <div class="mt-1 max-h-48 overflow-y-auto">
+                                                <button
+                                                    v-for="day in availableTransactionDays"
+                                                    :key="day.key"
+                                                    type="button"
+                                                    class="flex w-full items-center justify-between rounded px-2 py-1 text-sm text-gray-700 hover:bg-gray-100"
+                                                    @click.stop="selectTransactionDay(day.key)"
+                                                >
+                                                    {{ day.label }}
+                                                    <span v-if="transactionDayFilter === day.key" class="text-xs text-indigo-600">נבחר</span>
+                                                </button>
+                                                <p v-if="!availableTransactionDays.length" class="px-2 py-1 text-xs text-gray-500">אין תזרימים להצגה</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700 transition-colors hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        :disabled="!hasTransactionSelection"
+                                        @click="openBulkDuplicateModal"
+                                    >
+                                        📄 שכפל נבחרים
+                                        <span v-if="selectedTransactionsCount" class="ml-1">({{ selectedTransactionsCount }})</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        :disabled="!hasTransactionSelection || isBulkDeleting"
+                                        @click="confirmBulkDelete"
+                                    >
+                                        <svg
+                                            v-if="isBulkDeleting"
+                                            class="-ml-1 mr-1 h-4 w-4 animate-spin text-red-700"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                                        </svg>
+                                        🗑️ מחק נבחרים
+                                        <span v-if="selectedTransactionsCount" class="ml-1">({{ selectedTransactionsCount }})</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        @click="clearSelection"
+                                        class="inline-flex items-center rounded-md border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-500 transition-colors hover:text-gray-700 hover:bg-gray-100"
+                                    >
+                                        נקה בחירה
+                                    </button>
+                                </div>
                             </div>
 
                             <div class="overflow-x-auto">
@@ -531,6 +953,16 @@ watch(selectedAccountRow, (row) => {
                                     <table class="min-w-full divide-y divide-gray-200">
                                         <thead class="bg-gray-50">
                                             <tr>
+                                                <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    <input
+                                                        ref="selectAllTransactionsCheckbox"
+                                                        type="checkbox"
+                                                        class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                                        :checked="areAllTransactionsSelected"
+                                                        @change="toggleSelectAllTransactions($event.target.checked)"
+                                                        :disabled="!selectedAccountRow || !filteredTransactions.length"
+                                                    />
+                                                </th>
                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                     <button type="button"
                                                             class="w-full flex flex-row-reverse items-center justify-between gap-1 text-right hover:text-indigo-500 disabled:cursor-not-allowed"
@@ -551,9 +983,9 @@ watch(selectedAccountRow, (row) => {
                                                         <span v-if="selectedAccountRow && transactionSortIcon('description')" class="text-xs">{{ transactionSortIcon('description') }}</span>
                                                     </button>
                                                 </th>
-                                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                <th class="px-6 py-3 text-right.text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                     <button type="button"
-                                                            class="w-full flex flex-row-reverse items-center justify-between gap-1 text-right hover:text-indigo-500 disabled:cursor-not-allowed"
+                                                            class="w-full flex flex-row-reverse.items-center justify-between gap-1 text-right hover:text-indigo-500 disabled:cursor-not-allowed"
                                                             :class="isTransactionColumnSorted('category') ? 'text-indigo-600' : 'text-gray-600'"
                                                             @click="toggleTransactionSort('category')"
                                                             :disabled="!selectedAccountRow">
@@ -561,7 +993,7 @@ watch(selectedAccountRow, (row) => {
                                                         <span v-if="selectedAccountRow && transactionSortIcon('category')" class="text-xs">{{ transactionSortIcon('category') }}</span>
                                                     </button>
                                                 </th>
-                                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                <th class="px-6 py-3.text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                     <button type="button"
                                                             class="w-full flex flex-row-reverse items-center justify-between gap-1 text-right hover:text-indigo-500 disabled:cursor-not-allowed"
                                                             :class="isTransactionColumnSorted('amount') ? 'text-indigo-600' : 'text-gray-600'"
@@ -571,9 +1003,9 @@ watch(selectedAccountRow, (row) => {
                                                         <span v-if="selectedAccountRow && transactionSortIcon('amount')" class="text-xs">{{ transactionSortIcon('amount') }}</span>
                                                     </button>
                                                 </th>
-                                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                <th class="px-6 py-3 text-right.text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                     <button type="button"
-                                                            class="w-full flex flex-row-reverse items-center justify-between gap-1 text-right hover:text-indigo-500 disabled:cursor-not-allowed"
+                                                            class="w-full flex flex-row-reverse.items-center justify-between gap-1 text-right hover:text-indigo-500 disabled:cursor-not-allowed"
                                                             :class="isTransactionColumnSorted('status') ? 'text-indigo-600' : 'text-gray-600'"
                                                             @click="toggleTransactionSort('status')"
                                                             :disabled="!selectedAccountRow">
@@ -586,6 +1018,14 @@ watch(selectedAccountRow, (row) => {
                                         </thead>
                                         <tbody class="bg-white divide-y divide-gray-200">
                                             <tr v-for="transaction in filteredTransactions" :key="transaction.id" class="hover:bg-gray-50">
+                                                <td class="px-4 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                                                    <input
+                                                        type="checkbox"
+                                                        class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                                        :checked="isTransactionSelected(transaction.id)"
+                                                        @change="toggleTransactionSelection(transaction.id, $event.target.checked)"
+                                                    />
+                                                </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                                                     {{ new Date(transaction.transaction_date).toLocaleDateString('he-IL') }}
                                                 </td>
@@ -610,6 +1050,23 @@ watch(selectedAccountRow, (row) => {
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                                                     <div class="flex items-center justify-end space-x-2">
                                                         <button
+                                                            class="inline-flex items-center px-2 py-1 bg-white border border-green-200 text-green-600 hover:bg-green-50 rounded-md transition-colors duration-200 disabled:opacity-60"
+                                                            :disabled="isDuplicatingTransaction(transaction.id)"
+                                                            @click.stop="duplicateTransaction(transaction)"
+                                                        >
+                                                            <svg
+                                                                v-if="isDuplicatingTransaction(transaction.id)"
+                                                                class="-ml-1 mr-1 h-3 w-3 animate-spin text-green-600"
+                                                                xmlns="http://www.w3.org/2000/svg"
+                                                                fill="none"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                                                            </svg>
+                                                            📄<span class="sr-only">שכפל</span>
+                                                        </button>
+                                                        <button
                                                             class="inline-flex items-center px-2 py-1 bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors duration-200"
                                                             @click="openEditModal(transaction)"
                                                         >
@@ -625,7 +1082,7 @@ watch(selectedAccountRow, (row) => {
                                                 </td>
                                             </tr>
                                             <tr v-if="filteredTransactions.length === 0">
-                                                <td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500">
+                                                <td colspan="7" class="px-6 py-4 text-center text-sm text-gray-500">
                                                     אין עסקאות למקור התזרים הזה
                                                 </td>
                                             </tr>
@@ -651,5 +1108,53 @@ watch(selectedAccountRow, (row) => {
             @transaction-updated="handleTransactionSaved"
             @transaction-deleted="handleTransactionDeleted"
         />
+
+        <Modal :show="isBulkDuplicateModalOpen" @close="closeBulkDuplicateModal">
+            <div class="space-y-4 p-6">
+                <h2 class="text-lg font-semibold text-gray-900">שכפול תזרימים נבחרים</h2>
+                <p class="text-sm text-gray-600">
+                    בחר תאריך יעד לשכפול {{ selectedTransactionsCount }} תזרימים שנבחרו. התזרימים החדשים ישמרו על פרטי המקור, כולל קטגוריות ומקורות תזרים.
+                </p>
+                <div class="space-y-2">
+                    <label for="bulk-duplicate-date" class="block text-sm font-medium text-gray-700">תאריך חדש</label>
+                    <input
+                        id="bulk-duplicate-date"
+                        type="date"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        v-model="bulkDuplicateDate"
+                        :min="bulkMinDate"
+                        :max="bulkMaxDate"
+                    />
+                    <p v-if="bulkDuplicateError" class="text-sm text-red-600">{{ bulkDuplicateError }}</p>
+                </div>
+                <div class="flex items-center justify-end gap-2">
+                    <button
+                        type="button"
+                        class="inline-flex items-center rounded-md border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
+                        @click="closeBulkDuplicateModal"
+                    >
+                        ביטול
+                    </button>
+                    <button
+                        type="button"
+                        class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        :disabled="!bulkDuplicateDate || isBulkSubmitting"
+                        @click="submitBulkDuplicate"
+                    >
+                        <svg
+                            v-if="isBulkSubmitting"
+                            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                        >
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                        </svg>
+                        שכפל
+                    </button>
+                </div>
+            </div>
+        </Modal>
     </AuthenticatedLayout>
 </template>
