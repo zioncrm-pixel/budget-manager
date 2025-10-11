@@ -96,6 +96,49 @@ class CashFlowSourceController extends Controller
         return back()->with('success', 'מקור התזרים נמחק בהצלחה');
     }
 
+    public function duplicate(Request $request, CashFlowSource $cashFlowSource): RedirectResponse
+    {
+        abort_if($cashFlowSource->user_id !== Auth::id(), 403);
+
+        $data = $request->validate([
+            'year' => ['required', 'integer'],
+            'month' => ['required', 'integer', 'between:1,12'],
+            'planned_amount' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $user = $request->user();
+
+        DB::transaction(function () use ($user, $cashFlowSource, $data): void {
+            $newName = $this->generateDuplicateSourceName($user->id, $cashFlowSource->name);
+
+            $newSource = CashFlowSource::create([
+                'user_id' => $user->id,
+                'name' => $newName,
+                'type' => $cashFlowSource->type,
+                'color' => $cashFlowSource->color,
+                'icon' => $cashFlowSource->icon,
+                'description' => $cashFlowSource->description,
+                'is_active' => $cashFlowSource->is_active,
+            ]);
+
+            if (array_key_exists('planned_amount', $data) && $data['planned_amount'] !== null) {
+                $budget = CashFlowSourceBudget::create([
+                    'user_id' => $user->id,
+                    'cash_flow_source_id' => $newSource->id,
+                    'year' => (int) $data['year'],
+                    'month' => (int) $data['month'],
+                    'planned_amount' => $data['planned_amount'],
+                    'spent_amount' => 0,
+                    'remaining_amount' => $data['planned_amount'],
+                ]);
+
+                $budget->updateSpentAmount();
+            }
+        });
+
+        return back()->with('success', 'מקור התזרים שוכפל בהצלחה');
+    }
+
     public function transactions(Request $request, CashFlowSource $cashFlowSource): JsonResponse
     {
         abort_if($cashFlowSource->user_id !== Auth::id(), 403);
@@ -366,5 +409,23 @@ class CashFlowSourceController extends Controller
                 $budget->updateSpentAmount();
             }
         }
+    }
+
+    private function generateDuplicateSourceName(int $userId, string $currentName): string
+    {
+        $baseName = trim(preg_replace('/\s+\d+$/', '', $currentName)) ?: trim($currentName);
+
+        $existingNames = CashFlowSource::where('user_id', $userId)
+            ->where('name', 'like', $baseName . '%')
+            ->pluck('name')
+            ->all();
+
+        $suffix = 1;
+        do {
+            $candidate = trim($baseName . ' ' . $suffix);
+            $suffix++;
+        } while (in_array($candidate, $existingNames, true));
+
+        return $candidate;
     }
 }

@@ -36,6 +36,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/budgets/manage/category/{category}/transactions/available', [BudgetManagementController::class, 'availableTransactions'])->whereNumber('category')->name('budgets.manage.transactions.available');
     Route::post('/budgets/manage/category/{category}/transactions/assign', [BudgetManagementController::class, 'assignTransactions'])->whereNumber('category')->name('budgets.manage.transactions.assign');
     Route::delete('/budgets/manage/category/{category}/transactions/{transaction}', [BudgetManagementController::class, 'unassignTransaction'])->whereNumber('category')->whereNumber('transaction')->name('budgets.manage.transactions.unassign');
+    Route::post('/budgets/manage/category/{category}/duplicate', [BudgetManagementController::class, 'duplicateCategory'])->whereNumber('category')->name('budgets.manage.category.duplicate');
 
     Route::post('/cashflow/sources', [CashFlowSourceController::class, 'store'])->name('cashflow.sources.store');
     Route::put('/cashflow/sources/{cashFlowSource}', [CashFlowSourceController::class, 'update'])->whereNumber('cashFlowSource')->name('cashflow.sources.update');
@@ -45,6 +46,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/cashflow/sources/{cashFlowSource}/transactions/available', [CashFlowSourceController::class, 'availableTransactions'])->whereNumber('cashFlowSource')->name('cashflow.sources.transactions.available');
     Route::post('/cashflow/sources/{cashFlowSource}/transactions/assign', [CashFlowSourceController::class, 'assignTransactions'])->whereNumber('cashFlowSource')->name('cashflow.sources.transactions.assign');
     Route::delete('/cashflow/sources/{cashFlowSource}/transactions/{transaction}', [CashFlowSourceController::class, 'unassignTransaction'])->whereNumber('cashFlowSource')->whereNumber('transaction')->name('cashflow.sources.transactions.unassign');
+    Route::post('/cashflow/sources/{cashFlowSource}/duplicate', [CashFlowSourceController::class, 'duplicate'])->whereNumber('cashFlowSource')->name('cashflow.sources.duplicate');
 });
 
 // נתיב קצר להוספת תזרים מהדשבורד

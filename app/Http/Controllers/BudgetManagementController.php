@@ -288,6 +288,49 @@ class BudgetManagementController extends Controller
         ]);
     }
 
+    public function duplicateCategory(Request $request, Category $category): RedirectResponse
+    {
+        abort_if($category->user_id !== Auth::id(), 403);
+
+        $data = $request->validate([
+            'year' => ['required', 'integer'],
+            'month' => ['required', 'integer', 'between:1,12'],
+            'planned_amount' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $user = $request->user();
+
+        DB::transaction(function () use ($user, $category, $data): void {
+            $newName = $this->generateDuplicateCategoryName($user->id, $category->name);
+
+            $newCategory = Category::create([
+                'user_id' => $user->id,
+                'name' => $newName,
+                'type' => $category->type,
+                'color' => $category->color,
+                'icon' => $category->icon,
+                'description' => $category->description,
+                'is_active' => $category->is_active,
+            ]);
+
+            if (array_key_exists('planned_amount', $data) && $data['planned_amount'] !== null) {
+                $budget = Budget::create([
+                    'user_id' => $user->id,
+                    'category_id' => $newCategory->id,
+                    'year' => (int) $data['year'],
+                    'month' => (int) $data['month'],
+                    'planned_amount' => $data['planned_amount'],
+                    'spent_amount' => 0,
+                    'remaining_amount' => $data['planned_amount'],
+                ]);
+
+                $budget->updateSpentAmount();
+            }
+        });
+
+        return back()->with('success', 'הקטגוריה שוכפלה בהצלחה');
+    }
+
     public function unassignTransaction(Request $request, Category $category, Transaction $transaction): JsonResponse
     {
         abort_if($category->user_id !== Auth::id(), 403);
@@ -321,5 +364,23 @@ class BudgetManagementController extends Controller
         if ($budget) {
             $budget->updateSpentAmount();
         }
+    }
+
+    private function generateDuplicateCategoryName(int $userId, string $currentName): string
+    {
+        $baseName = trim(preg_replace('/\s+\d+$/', '', $currentName)) ?: trim($currentName);
+
+        $existingNames = Category::where('user_id', $userId)
+            ->where('name', 'like', $baseName . '%')
+            ->pluck('name')
+            ->all();
+
+        $suffix = 1;
+        do {
+            $candidate = trim($baseName . ' ' . $suffix);
+            $suffix++;
+        } while (in_array($candidate, $existingNames, true));
+
+        return $candidate;
     }
 }
