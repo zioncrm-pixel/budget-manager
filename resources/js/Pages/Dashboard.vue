@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { Head, router, Link } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import TransactionAddModal from '@/Components/TransactionAddModal.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
+import { loadPeriod, savePeriod } from '@/utils/periodStorage'
 
 const props = defineProps({
     user: Object,
@@ -12,12 +13,16 @@ const props = defineProps({
     totalIncome: Number,
     totalExpenses: Number,
     balance: Number,
+    accountStatus: Number,
     categoriesWithBudgets: Array,
     cashFlowSources: Array,
 })
 
-const selectedYear = ref(Number(props.currentYear) || new Date().getFullYear())
-const selectedMonth = ref(Number(props.currentMonth) || new Date().getMonth() + 1)
+const defaultYear = Number(props.currentYear) || new Date().getFullYear()
+const defaultMonth = Number(props.currentMonth) || new Date().getMonth() + 1
+
+const selectedYear = ref(defaultYear)
+const selectedMonth = ref(defaultMonth)
 const isTransactionModalOpen = ref(false)
 
 const monthOptions = [
@@ -42,11 +47,62 @@ const selectedMonthLabel = computed(() => {
     return current?.label || selectedMonth.value
 })
 
-const navigateToPeriod = (year, month) => {
+watch(
+    () => props.currentYear,
+    (value) => {
+        selectedYear.value = Number(value) || new Date().getFullYear()
+    }
+)
+
+watch(
+    () => props.currentMonth,
+    (value) => {
+        selectedMonth.value = Number(value) || new Date().getMonth() + 1
+    }
+)
+
+const persistPeriod = (year, month) => {
+    if (typeof window === 'undefined') return
+    savePeriod(year, month)
+}
+
+const navigateToPeriod = (year, month, options = {}) => {
+    persistPeriod(year, month)
     router.visit(`/dashboard?year=${year}&month=${month}`, {
         preserveScroll: true,
         replace: true,
+        ...options,
     })
+}
+
+const tryApplyStoredPeriod = () => {
+    if (typeof window === 'undefined') {
+        return
+    }
+
+    const stored = loadPeriod()
+    const params = new URL(window.location.href).searchParams
+    const queryYear = Number(params.get('year'))
+    const queryMonth = Number(params.get('month'))
+    const hasValidQuery = Number.isInteger(queryYear) && Number.isInteger(queryMonth)
+
+    if (hasValidQuery) {
+        persistPeriod(queryYear, queryMonth)
+        return
+    }
+
+    if (!stored) {
+        persistPeriod(selectedYear.value, selectedMonth.value)
+        return
+    }
+
+    if (stored.year !== selectedYear.value || stored.month !== selectedMonth.value) {
+        selectedYear.value = stored.year
+        selectedMonth.value = stored.month
+        navigateToPeriod(stored.year, stored.month)
+    } else {
+        persistPeriod(stored.year, stored.month)
+    }
 }
 
 const handleYearUpdate = (value) => {
@@ -58,6 +114,25 @@ const handleMonthUpdate = (value) => {
     selectedMonth.value = value
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
+
+const handleToday = () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+
+    if (year === selectedYear.value && month === selectedMonth.value) {
+        navigateToPeriod(year, month)
+        return
+    }
+
+    selectedYear.value = year
+    selectedMonth.value = month
+    navigateToPeriod(year, month)
+}
+
+onMounted(() => {
+    tryApplyStoredPeriod()
+})
 
 const openTransactionModal = () => {
     isTransactionModalOpen.value = true
@@ -104,6 +179,7 @@ const formatCurrency = (amount) => {
                             :month-options="monthOptions"
                             @update:year="handleYearUpdate"
                             @update:month="handleMonthUpdate"
+                            @today="handleToday"
                         />
                     </div>
                 </div>
@@ -123,7 +199,7 @@ const formatCurrency = (amount) => {
                             <div class="flex-1 text-right">
                                 <p class="text-sm font-medium text-gray-500">מצב העו"ש</p>
                                 <p class="text-2xl font-bold text-gray-900">
-                                    {{ formatCurrency(props.balance) }}
+                                    {{ formatCurrency(props.accountStatus) }}
                                 </p>
                             </div>
                         </div>
@@ -205,12 +281,12 @@ const formatCurrency = (amount) => {
                                     </svg>
                                     הוסף תזרים
                                 </button>
-                                <button 
-                                    disabled
-                                    class="inline-flex items-center px-4 py-2 bg-gray-400 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest cursor-not-allowed opacity-50"
+                                <Link
+                                    :href="route('cashflow.import.index')"
+                                    class="inline-flex items-center px-4 py-2 bg-white border border-indigo-500 rounded-md font-semibold text-xs text-indigo-600 uppercase tracking-widest hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150"
                                 >
-                                    קרוב: ייבוא מקובץ
-                                </button>
+                                    ייבוא נתונים
+                                </Link>
                             </div>
                         </div>
                     </div>

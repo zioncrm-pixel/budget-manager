@@ -1,18 +1,60 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import ApplicationLogo from '@/Components/ApplicationLogo.vue';
 import Dropdown from '@/Components/Dropdown.vue';
 import DropdownLink from '@/Components/DropdownLink.vue';
 import NavLink from '@/Components/NavLink.vue';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink.vue';
 import { Link } from '@inertiajs/vue3';
+import { loadPeriod, PERIOD_STORAGE_KEY } from '@/utils/periodStorage';
 
 const showingNavigationDropdown = ref(false);
+const storedPeriod = ref(typeof window !== 'undefined' ? loadPeriod() : null);
+
+const updateStoredPeriod = (event) => {
+    storedPeriod.value = event?.detail ?? (typeof window !== 'undefined' ? loadPeriod() : null);
+};
+
+const handleStorageEvent = (event) => {
+    if (event.key === PERIOD_STORAGE_KEY) {
+        storedPeriod.value = typeof window !== 'undefined' ? loadPeriod() : null;
+    }
+};
+
+onMounted(() => {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    window.addEventListener('bm:period-changed', updateStoredPeriod);
+    window.addEventListener('storage', handleStorageEvent);
+});
+
+onBeforeUnmount(() => {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    window.removeEventListener('bm:period-changed', updateStoredPeriod);
+    window.removeEventListener('storage', handleStorageEvent);
+});
+
+const linkWithPeriod = (name, params = {}) => {
+    if (storedPeriod.value?.year && storedPeriod.value?.month) {
+        params = {
+            ...params,
+            year: storedPeriod.value.year,
+            month: storedPeriod.value.month,
+        };
+    }
+
+    return route(name, params);
+};
 </script>
 
 <template>
     <div>
-        <div class="min-h-screen bg-gray-100">
+        <div class="min-h-screen bg-gray-100" dir="rtl">
             <nav
                 class="border-b border-gray-100 bg-white"
             >
@@ -22,7 +64,7 @@ const showingNavigationDropdown = ref(false);
                         <div class="flex">
                             <!-- Logo -->
                             <div class="flex shrink-0 items-center">
-                                <Link :href="route('dashboard')">
+                                <Link :href="linkWithPeriod('dashboard')">
                                     <ApplicationLogo
                                         class="block h-9 w-auto fill-current text-gray-800"
                                     />
@@ -34,31 +76,31 @@ const showingNavigationDropdown = ref(false);
                                 class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex"
                             >
                                 <NavLink
-                                    :href="route('dashboard')"
+                                    :href="linkWithPeriod('dashboard')"
                                     :active="route().current('dashboard')"
                                 >
                                     דשבורד
                                 </NavLink>
                                 <NavLink
-                                    :href="route('cashflow.index')"
+                                    :href="linkWithPeriod('cashflow.index')"
                                     :active="route().current('cashflow.index')"
                                 >
                                     ניהול תזרים
                                 </NavLink>
                                 <NavLink
-                                    :href="route('budgets.overview')"
+                                    :href="linkWithPeriod('budgets.overview')"
                                     :active="route().current('budgets.overview')"
                                 >
                                     קטגוריות ותקציבים
                                 </NavLink>
                                 <NavLink
-                                    :href="route('cashflow.sources.index')"
+                                    :href="linkWithPeriod('cashflow.sources.index')"
                                     :active="route().current('cashflow.sources.index')"
                                 >
                                     מקורות תזרים
                                 </NavLink>
                                 <NavLink
-                                    :href="route('cashflow.import.index')"
+                                    :href="linkWithPeriod('cashflow.import.index')"
                                     :active="route().current('cashflow.import.index')"
                                 >
                                     ייבוא תזרים
@@ -165,31 +207,31 @@ const showingNavigationDropdown = ref(false);
                 >
                     <div class="space-y-1 pb-3 pt-2">
                         <ResponsiveNavLink
-                            :href="route('dashboard')"
+                            :href="linkWithPeriod('dashboard')"
                             :active="route().current('dashboard')"
                         >
                             דשבורד
                         </ResponsiveNavLink>
                         <ResponsiveNavLink
-                            :href="route('cashflow.index')"
+                            :href="linkWithPeriod('cashflow.index')"
                             :active="route().current('cashflow.index')"
                         >
                             ניהול תזרים
                         </ResponsiveNavLink>
                         <ResponsiveNavLink
-                            :href="route('budgets.overview')"
+                            :href="linkWithPeriod('budgets.overview')"
                             :active="route().current('budgets.overview')"
                         >
                             קטגוריות ותקציבים
                         </ResponsiveNavLink>
                         <ResponsiveNavLink
-                            :href="route('cashflow.sources.index')"
+                            :href="linkWithPeriod('cashflow.sources.index')"
                             :active="route().current('cashflow.sources.index')"
                         >
                             מקורות תזרים
                         </ResponsiveNavLink>
                         <ResponsiveNavLink
-                            :href="route('cashflow.import.index')"
+                            :href="linkWithPeriod('cashflow.import.index')"
                             :active="route().current('cashflow.import.index')"
                         >
                             ייבוא תזרים

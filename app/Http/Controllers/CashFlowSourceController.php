@@ -26,12 +26,14 @@ class CashFlowSourceController extends Controller
             'icon' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'is_active' => ['required', 'boolean'],
+            'allows_refunds' => ['required', 'boolean'],
             'planned_amount' => ['nullable', 'numeric', 'min:0'],
             'year' => ['nullable', 'integer'],
             'month' => ['nullable', 'integer', 'between:1,12'],
         ]);
 
         $data['is_active'] = (bool) $data['is_active'];
+        $data['allows_refunds'] = (bool) $data['allows_refunds'];
 
         DB::transaction(function () use ($user, $data): void {
             $source = $user->cashFlowSources()->create(collect($data)->only([
@@ -41,6 +43,7 @@ class CashFlowSourceController extends Controller
                 'icon',
                 'description',
                 'is_active',
+                'allows_refunds',
             ])->all());
 
             $this->upsertBudgetIfNeeded($user->id, $source, $data);
@@ -60,11 +63,15 @@ class CashFlowSourceController extends Controller
             'icon' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'is_active' => ['required', 'boolean'],
+            'allows_refunds' => ['required', 'boolean'],
             'planned_amount' => ['nullable', 'numeric', 'min:0'],
             'year' => ['nullable', 'integer'],
             'month' => ['nullable', 'integer', 'between:1,12'],
             'remove_budget' => ['nullable', 'boolean'],
         ]);
+
+        $data['is_active'] = (bool) $data['is_active'];
+        $data['allows_refunds'] = (bool) $data['allows_refunds'];
 
         $cashFlowSource->update(collect($data)->only([
             'name',
@@ -73,6 +80,7 @@ class CashFlowSourceController extends Controller
             'icon',
             'description',
             'is_active',
+            'allows_refunds',
         ])->all());
 
         if ($request->boolean('remove_budget')) {
@@ -123,6 +131,7 @@ class CashFlowSourceController extends Controller
                 'icon' => $cashFlowSource->icon,
                 'description' => $cashFlowSource->description,
                 'is_active' => $cashFlowSource->is_active,
+                'allows_refunds' => $cashFlowSource->allows_refunds,
             ]);
 
             $plannedAmount = $data['planned_amount'] ?? null;
@@ -258,10 +267,27 @@ class CashFlowSourceController extends Controller
             ];
         });
 
+        $incomeTotal = $transactions->where('type', 'income')->sum('amount');
+        $expenseTotal = $transactions->where('type', 'expense')->sum('amount');
+
+        if ($cashFlowSource->allows_refunds) {
+            if ($cashFlowSource->type === 'income') {
+                $netAmount = $incomeTotal - $expenseTotal;
+            } else {
+                $netAmount = $expenseTotal - $incomeTotal;
+            }
+        } else {
+            $netAmount = $cashFlowSource->type === 'income'
+                ? $incomeTotal
+                : $expenseTotal;
+        }
+
         return response()->json([
             'transactions' => $response,
             'summary' => [
-                'total_amount' => $transactions->sum('amount'),
+                'total_income' => $incomeTotal,
+                'total_expense' => $expenseTotal,
+                'net_amount' => $netAmount,
                 'transaction_count' => $transactions->count(),
             ],
         ]);
@@ -277,13 +303,16 @@ class CashFlowSourceController extends Controller
 
         $query = $user->transactions()
             ->with(['category', 'cashFlowSource'])
-            ->where('type', $cashFlowSource->type)
             ->whereYear('transaction_date', $year)
             ->whereMonth('transaction_date', $month)
             ->where(function ($q) use ($cashFlowSource) {
                 $q->whereNull('cash_flow_source_id')
                     ->orWhere('cash_flow_source_id', '!=', $cashFlowSource->id);
             });
+
+        if (!$cashFlowSource->allows_refunds) {
+            $query->where('type', $cashFlowSource->type);
+        }
 
         if ($request->get('exclude_ids')) {
             $ids = collect(explode(',', $request->get('exclude_ids')))
@@ -340,7 +369,7 @@ class CashFlowSourceController extends Controller
         $dates = [];
 
         foreach ($transactions as $transaction) {
-            if ($transaction->type !== $cashFlowSource->type) {
+            if ($cashFlowSource->type !== $transaction->type && !$cashFlowSource->allows_refunds) {
                 continue;
             }
 

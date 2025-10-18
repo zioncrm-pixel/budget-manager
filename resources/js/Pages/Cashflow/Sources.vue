@@ -1,10 +1,11 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
 import CashFlowSourceModal from '@/Components/CashFlowSourceModal.vue'
 import CashFlowSourceTransactionsModal from '@/Components/CashFlowSourceTransactionsModal.vue'
+import { loadPeriod, savePeriod } from '@/utils/periodStorage'
 
 const props = defineProps({
     user: Object,
@@ -13,6 +14,7 @@ const props = defineProps({
     totalIncome: Number,
     totalExpenses: Number,
     balance: Number,
+    accountStatus: Number,
     cashFlowSourcesWithStats: Array,
     cashFlowSources: Array,
     allCashFlowSources: Array,
@@ -20,8 +22,11 @@ const props = defineProps({
     budgetsForMonth: Array,
 })
 
-const selectedYear = ref(Number(props.currentYear) || new Date().getFullYear())
-const selectedMonth = ref(Number(props.currentMonth) || new Date().getMonth() + 1)
+const defaultYear = Number(props.currentYear) || new Date().getFullYear()
+const defaultMonth = Number(props.currentMonth) || new Date().getMonth() + 1
+
+const selectedYear = ref(defaultYear)
+const selectedMonth = ref(defaultMonth)
 const isSourceModalOpen = ref(false)
 const modalMode = ref('create')
 const selectedSource = ref(null)
@@ -66,11 +71,48 @@ watch(
     }
 )
 
-const navigateToPeriod = (year, month) => {
+const persistPeriod = (year, month) => {
+    if (typeof window === 'undefined') return
+    savePeriod(year, month)
+}
+
+const navigateToPeriod = (year, month, options = {}) => {
+    persistPeriod(year, month)
     router.visit(`/cashflow/sources?year=${year}&month=${month}`, {
         preserveScroll: true,
         replace: true,
+        ...options,
     })
+}
+
+const tryApplyStoredPeriod = () => {
+    if (typeof window === 'undefined') {
+        return
+    }
+
+    const stored = loadPeriod()
+    const params = new URL(window.location.href).searchParams
+    const queryYear = Number(params.get('year'))
+    const queryMonth = Number(params.get('month'))
+    const hasValidQuery = Number.isInteger(queryYear) && Number.isInteger(queryMonth)
+
+    if (hasValidQuery) {
+        persistPeriod(queryYear, queryMonth)
+        return
+    }
+
+    if (!stored) {
+        persistPeriod(selectedYear.value, selectedMonth.value)
+        return
+    }
+
+    if (stored.year !== selectedYear.value || stored.month !== selectedMonth.value) {
+        selectedYear.value = stored.year
+        selectedMonth.value = stored.month
+        navigateToPeriod(stored.year, stored.month)
+    } else {
+        persistPeriod(stored.year, stored.month)
+    }
 }
 
 const handleYearUpdate = (value) => {
@@ -83,6 +125,25 @@ const handleMonthUpdate = (value) => {
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
 
+const handleToday = () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+
+    if (year === selectedYear.value && month === selectedMonth.value) {
+        navigateToPeriod(year, month)
+        return
+    }
+
+    selectedYear.value = year
+    selectedMonth.value = month
+    navigateToPeriod(year, month)
+}
+
+onMounted(() => {
+    tryApplyStoredPeriod()
+})
+
 const formatCurrency = (amount) => {
     return new Intl.NumberFormat('he-IL', {
         minimumFractionDigits: 2,
@@ -94,13 +155,55 @@ const sourceTypeLabel = (type) => (type === 'income' ? 'הכנסה' : 'הוצא�
 
 const sourceTypeBadgeClass = (type) => (type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700')
 
+const netAmountForSource = (source) => Number(source?.monthly_total_amount ?? source?.monthly_net_amount ?? 0)
+
+const getContrastingTextColor = (hexColor) => {
+    if (typeof hexColor !== 'string') {
+        return '#111827'
+    }
+
+    const sanitized = hexColor.replace('#', '').trim()
+    if (!/^[0-9a-fA-F]{3,6}$/.test(sanitized)) {
+        return '#111827'
+    }
+
+    const normalized = sanitized.length === 3
+        ? sanitized.split('').map(char => char + char).join('')
+        : sanitized.padEnd(6, '0')
+
+    const r = parseInt(normalized.slice(0, 2), 16)
+    const g = parseInt(normalized.slice(2, 4), 16)
+    const b = parseInt(normalized.slice(4, 6), 16)
+
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return luminance > 0.6 ? '#111827' : '#FFFFFF'
+}
+
 const formatMonthlyAmount = (source) => {
-    const amount = Number(source?.monthly_total_amount || 0)
-    const prefix = source?.type === 'income' ? '+' : '-'
+    const amount = netAmountForSource(source)
+
+    if (!amount) {
+        return formatCurrency(0)
+    }
+
+    if (source?.type === 'income') {
+        const prefix = amount >= 0 ? '+' : '-'
+        return `${prefix}${formatCurrency(Math.abs(amount))}`
+    }
+
+    const prefix = amount >= 0 ? '-' : '+'
     return `${prefix}${formatCurrency(Math.abs(amount))}`
 }
 
-const monthlyAmountClass = (source) => (source?.type === 'income' ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold')
+const monthlyAmountClass = (source) => {
+    const amount = netAmountForSource(source)
+
+    if (source?.type === 'income') {
+        return amount >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'
+    }
+
+    return amount >= 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'
+}
 
 const formatDateLabel = (date) => {
     if (!date) return 'אין נתונים'
@@ -203,16 +306,20 @@ const hasSources = computed(() => Array.isArray(props.cashFlowSourcesWithStats) 
         <template #header>
             <div class="flex flex-col gap-4 text-right">
                 <div class="flex w-full flex-row items-start gap-6 text-right">
-                    <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                    <div class="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
+                            <p class="text-xs text-gray-500">מצב העו"ש</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.accountStatus) }} ₪</p>
+                        </div>
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">יתרה</p>
                             <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">סה"כ הכנסות</p>
                             <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">סה"כ הוצאות</p>
                             <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
                         </div>
@@ -232,6 +339,7 @@ const hasSources = computed(() => Array.isArray(props.cashFlowSourcesWithStats) 
                                 :month-options="monthOptions"
                                 @update:year="handleYearUpdate"
                                 @update:month="handleMonthUpdate"
+                                @today="handleToday"
                             />
                         </div>
                     </div>
@@ -271,7 +379,16 @@ const hasSources = computed(() => Array.isArray(props.cashFlowSourcesWithStats) 
                             >
                                 <div class="flex items-start justify-between gap-3">
                                     <div class="flex items-center gap-3">
-                                        <span class="text-3xl">{{ source.icon || (source.type === 'income' ? '💰' : '💸') }}</span>
+                                        <span
+                                            class="flex h-12 w-12 items-center justify-center rounded-md text-3xl shadow-sm ring-1 ring-black/5"
+                                            :style="{
+                                                backgroundColor: source.color || '#E5E7EB',
+                                                color: getContrastingTextColor(source.color || '#E5E7EB'),
+                                            }"
+                                            aria-hidden="true"
+                                        >
+                                            {{ source.icon || (source.type === 'income' ? '💰' : '💸') }}
+                                        </span>
                                         <div class="text-right">
                                             <h4 class="text-lg font-semibold text-gray-900">{{ source.name }}</h4>
                                             <div class="mt-2 flex items-center justify-end gap-2 text-xs">
@@ -333,14 +450,27 @@ const hasSources = computed(() => Array.isArray(props.cashFlowSourcesWithStats) 
                                 </div>
 
                                 <div class="grid grid-cols-1 gap-3 text-sm text-gray-600">
+                                <div class="flex items-center justify-between">
+                                    <span>סה"כ לחודש</span>
+                                    <span :class="monthlyAmountClass(source)">{{ formatMonthlyAmount(source) }} ₪</span>
+                                </div>
+                                <div
+                                    v-if="source.allows_refunds"
+                                    class="flex flex-col gap-1 text-xs text-gray-500"
+                                >
                                     <div class="flex items-center justify-between">
-                                        <span>סה"כ לחודש</span>
-                                        <span :class="monthlyAmountClass(source)">{{ formatMonthlyAmount(source) }} ₪</span>
+                                        <span>סך הוצאות</span>
+                                        <span class="font-medium text-red-600">-{{ formatCurrency(Number(source.monthly_expense_amount || 0)) }} ₪</span>
                                     </div>
                                     <div class="flex items-center justify-between">
-                                        <span>מספר עסקאות</span>
-                                        <span class="font-semibold text-gray-900">{{ source.monthly_transaction_count }}</span>
+                                        <span>סך זיכויים</span>
+                                        <span class="font-medium text-green-600">+{{ formatCurrency(Number(source.monthly_income_amount || 0)) }} ₪</span>
                                     </div>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span>מספר עסקאות</span>
+                                    <span class="font-semibold text-gray-900">{{ source.monthly_transaction_count }}</span>
+                                </div>
                                     <div class="flex items-center justify-between text-xs text-gray-500">
                                         <span>עסקה אחרונה</span>
                                         <span>{{ formatDateLabel(source.latest_transaction_date) }}</span>

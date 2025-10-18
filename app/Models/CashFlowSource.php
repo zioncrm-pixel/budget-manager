@@ -15,11 +15,13 @@ class CashFlowSource extends Model
         'color',
         'icon',
         'description',
-        'is_active'
+        'is_active',
+        'allows_refunds',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'allows_refunds' => 'boolean',
     ];
 
     // קשר למשתמש

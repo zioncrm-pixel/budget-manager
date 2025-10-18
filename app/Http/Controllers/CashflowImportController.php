@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\CashflowImport\ImportPasteRequest;
 use App\Http\Requests\CashflowImport\ImportProcessRequest;
 use App\Http\Requests\CashflowImport\ImportUploadRequest;
 use App\Services\CashflowImport\CashflowImportProcessor;
 use App\Services\CashflowImport\DatasetAnalyzer;
 use App\Services\CashflowImport\ImportSessionManager;
 use App\Services\CashflowImport\SpreadsheetReader;
+use App\Services\CashflowImport\ClipboardParser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -21,6 +23,7 @@ class CashflowImportController extends Controller
         private readonly DatasetAnalyzer $analyzer,
         private readonly ImportSessionManager $sessions,
         private readonly CashflowImportProcessor $processor,
+        private readonly ClipboardParser $clipboard,
     ) {
     }
 
@@ -48,6 +51,7 @@ class CashflowImportController extends Controller
                 'type' => $source->type,
                 'color' => $source->color,
                 'icon' => $source->icon,
+                'allows_refunds' => $source->allows_refunds,
             ]);
 
         return Inertia::render('Cashflow/Import', [
@@ -101,6 +105,63 @@ class CashflowImportController extends Controller
         return response()->json([
             'import_id' => $session['id'],
             'file' => $payload['file'],
+            'meta' => $payload['meta'],
+            'columns' => array_map(fn ($column) => [
+                'index' => $column['index'],
+                'label' => $column['label'],
+                'sample_values' => $column['sample_values'],
+                'detected_types' => $column['detected_types'],
+                'header_guess' => $column['header_guess'],
+            ], $analysis['columns']),
+            'rows' => array_map(fn ($row) => [
+                'index' => $row['index'],
+                'original_index' => $row['original_index'],
+                'values' => $row['values'],
+                'auto_skip' => $row['auto_skip'],
+                'skip_reasons' => $row['skip_reasons'],
+                'header_like_score' => $row['header_like_score'],
+            ], $analysis['rows']),
+            'header_candidates' => $analysis['header_candidates'],
+            'detected_date_range' => $analysis['detected_date_range'],
+            'numeric_columns' => $analysis['numeric_columns'],
+        ]);
+    }
+
+    public function paste(ImportPasteRequest $request): JsonResponse
+    {
+        $user = $request->user();
+        $content = $request->input('content', '');
+
+        $dataset = $this->clipboard->parse($content);
+
+        if ($dataset['total_rows'] === 0) {
+            return response()->json([
+                'message' => 'לא זוהו נתונים להדבקה. ודא שהעתקת טבלה מגיליון אקסל ונסה שוב.',
+            ], 422);
+        }
+
+        $analysis = $this->analyzer->analyze($dataset['rows'], $dataset['total_columns']);
+
+        $payload = [
+            'source' => 'clipboard',
+            'meta' => [
+                'total_rows' => $dataset['total_rows'],
+                'total_columns' => $dataset['total_columns'],
+            ],
+            'rows' => $analysis['rows'],
+            'analysis' => [
+                'columns' => $analysis['columns'],
+                'header_candidates' => $analysis['header_candidates'],
+                'detected_date_range' => $analysis['detected_date_range'],
+                'numeric_columns' => $analysis['numeric_columns'],
+            ],
+        ];
+
+        $session = $this->sessions->create($user->id, $payload);
+
+        return response()->json([
+            'import_id' => $session['id'],
+            'source' => 'clipboard',
             'meta' => $payload['meta'],
             'columns' => array_map(fn ($column) => [
                 'index' => $column['index'],

@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { Head, router, Link } from '@inertiajs/vue3'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { Head, router, Link, usePage } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import TransactionAddModal from '@/Components/TransactionAddModal.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
 import Modal from '@/Components/Modal.vue'
+import BudgetManagerModal from '@/Components/BudgetManagerModal.vue'
+import { loadPeriod, savePeriod } from '@/utils/periodStorage'
 
 const props = defineProps({
     user: Object,
@@ -13,14 +15,18 @@ const props = defineProps({
     totalIncome: Number,
     totalExpenses: Number,
     balance: Number,
+    accountStatus: Number,
     accountStatementRows: Array,
     allTransactions: Array,
     categoriesWithBudgets: Array,
     cashFlowSources: Array,
 })
 
-const selectedYear = ref(Number(props.currentYear) || new Date().getFullYear())
-const selectedMonth = ref(Number(props.currentMonth) || new Date().getMonth() + 1)
+const defaultYear = Number(props.currentYear) || new Date().getFullYear()
+const defaultMonth = Number(props.currentMonth) || new Date().getMonth() + 1
+
+const selectedYear = ref(defaultYear)
+const selectedMonth = ref(defaultMonth)
 const selectedAccountRow = ref(null)
 const isTransactionModalOpen = ref(false)
 const modalMode = ref('create')
@@ -48,6 +54,20 @@ const selectedMonthLabel = computed(() => {
     return current?.label || selectedMonth.value
 })
 
+watch(
+    () => props.currentYear,
+    (value) => {
+        selectedYear.value = Number(value) || new Date().getFullYear()
+    }
+)
+
+watch(
+    () => props.currentMonth,
+    (value) => {
+        selectedMonth.value = Number(value) || new Date().getMonth() + 1
+    }
+)
+
 const localAccountStatementRows = ref(props.accountStatementRows?.map(row => ({ ...row })) || [])
 
 const defaultAccountSort = () => ({ key: 'date', direction: 'desc' })
@@ -70,12 +90,219 @@ const isDayFilterOpen = ref(false)
 const dayFilterContainer = ref(null)
 const selectAllTransactionsCheckbox = ref(null)
 const selectAllAccountRowsCheckbox = ref(null)
+const assignCategoryContext = ref('account')
+const isAssignCategoryModalOpen = ref(false)
+const isAssignCategorySubmitting = ref(false)
+const assignCategorySelectedId = ref('')
+const assignCategoryError = ref(null)
+const isCategoryCreateModalOpen = ref(false)
+const pendingAssignContext = ref(null)
+const lastProcessedCategoryId = ref(null)
+const page = usePage()
+const csrfToken = typeof document !== 'undefined'
+    ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+    : ''
 
-const navigateToPeriod = (year, month) => {
+const transactionsById = computed(() => {
+    const map = new Map()
+    ;(props.allTransactions || []).forEach((transaction) => {
+        if (transaction?.id !== undefined && transaction?.id !== null) {
+            map.set(Number(transaction.id), transaction)
+        }
+    })
+    return map
+})
+
+const assignCategorySelectionIds = computed(() => (assignCategoryContext.value === 'account'
+    ? selectedAccountTransactionIds.value
+    : selectedTransactionIds.value))
+
+const assignCategorySelectionCount = computed(() => assignCategorySelectionIds.value.length)
+
+const assignCategorySelectionTypes = computed(() => {
+    const types = new Set()
+    assignCategorySelectionIds.value.forEach((id) => {
+        const transaction = transactionsById.value.get(Number(id))
+        if (transaction?.type) {
+            types.add(transaction.type)
+        }
+    })
+    return Array.from(types)
+})
+
+const assignCategoryType = computed(() => (assignCategorySelectionTypes.value.length === 1
+    ? assignCategorySelectionTypes.value[0]
+    : null))
+
+const assignableCategories = computed(() => {
+    const type = assignCategoryType.value
+    if (!type) {
+        return []
+    }
+
+    return (props.categoriesWithBudgets || []).filter((category) => {
+        const categoryType = category.type || category.category_type
+        return categoryType === type
+    })
+})
+
+const isAssignCategoryReady = computed(() => Boolean(assignCategorySelectedId.value) && Boolean(assignCategoryType.value) && assignableCategories.value.length > 0)
+
+const getCategoryOptionId = (category) => {
+    const id = category?.category_id ?? category?.id
+    return id !== undefined && id !== null ? String(id) : ''
+}
+
+const getCategoryOptionLabel = (category) => category?.category_name || category?.name || 'ללא שם'
+
+const getSelectionIdsForContext = (context) => (context === 'account'
+    ? selectedAccountTransactionIds.value
+    : selectedTransactionIds.value)
+
+const hasSelectionForContext = (context) => (context === 'account'
+    ? hasAccountSelection.value
+    : hasTransactionSelection.value)
+
+const clearSelectionForContext = (context) => {
+    if (context === 'account') {
+        selectedAccountTransactionIds.value = []
+    } else {
+        selectedTransactionIds.value = []
+    }
+}
+
+watch(assignableCategories, (categories) => {
+    if (!isAssignCategoryModalOpen.value) {
+        return
+    }
+
+    if (!categories.length) {
+        assignCategorySelectedId.value = ''
+        return
+    }
+
+    const exists = categories.some((category) => getCategoryOptionId(category) === assignCategorySelectedId.value)
+    if (!exists) {
+        assignCategorySelectedId.value = getCategoryOptionId(categories[0])
+    }
+})
+
+watch(assignCategorySelectionIds, () => {
+    assignCategorySelectedId.value = ''
+    assignCategoryError.value = null
+})
+
+watch(
+    () => page.props?.value?.flash?.created_category,
+    async (created) => {
+        if (!created || !created.id || !pendingAssignContext.value) {
+            return
+        }
+
+        if (lastProcessedCategoryId.value === created.id) {
+            return
+        }
+
+        lastProcessedCategoryId.value = created.id
+
+        const { context, selectionIds, type } = pendingAssignContext.value
+        pendingAssignContext.value = null
+
+        closeCategoryCreateModal()
+
+        if (type && created.type && created.type !== type) {
+            assignCategoryError.value = 'הקטגוריה החדשה אינה תואמת לסוג התזרימים שנבחרו.'
+            return
+        }
+
+        assignCategoryContext.value = context
+
+        if (context === 'account') {
+            selectedAccountTransactionIds.value = selectionIds.map(Number)
+        } else {
+            selectedTransactionIds.value = selectionIds.map(Number)
+        }
+
+        await nextTick()
+
+        const createdId = String(created.id)
+        const ensureCategoryExists = () => assignableCategories.value.some(
+            (category) => getCategoryOptionId(category) === createdId
+        )
+
+        const proceedWithAssignment = async () => {
+            assignCategorySelectedId.value = createdId
+            assignCategoryError.value = null
+
+            if (!isAssignCategoryModalOpen.value) {
+                isAssignCategoryModalOpen.value = true
+            }
+
+            await submitAssignCategory()
+        }
+
+        if (!ensureCategoryExists()) {
+            router.reload({
+                only: ['categoriesWithBudgets'],
+                preserveState: true,
+                onSuccess: async () => {
+                    await nextTick()
+                    if (!ensureCategoryExists()) {
+                        assignCategoryError.value = 'הקטגוריה החדשה לא נטענה. נסה לרענן את העמוד.'
+                        return
+                    }
+                    await proceedWithAssignment()
+                },
+            })
+            return
+        }
+
+        await proceedWithAssignment()
+    }
+)
+
+const persistPeriod = (year, month) => {
+    if (typeof window === 'undefined') return
+    savePeriod(year, month)
+}
+
+const navigateToPeriod = (year, month, options = {}) => {
+    persistPeriod(year, month)
     router.visit(`/cashflow?year=${year}&month=${month}`, {
         preserveScroll: true,
         replace: true,
+        ...options,
     })
+}
+
+const tryApplyStoredPeriod = () => {
+    if (typeof window === 'undefined') {
+        return
+    }
+
+    const stored = loadPeriod()
+    const params = new URL(window.location.href).searchParams
+    const queryYear = Number(params.get('year'))
+    const queryMonth = Number(params.get('month'))
+    const hasValidQuery = Number.isInteger(queryYear) && Number.isInteger(queryMonth)
+
+    if (hasValidQuery) {
+        persistPeriod(queryYear, queryMonth)
+        return
+    }
+
+    if (!stored) {
+        persistPeriod(selectedYear.value, selectedMonth.value)
+        return
+    }
+
+    if (stored.year !== selectedYear.value || stored.month !== selectedMonth.value) {
+        selectedYear.value = stored.year
+        selectedMonth.value = stored.month
+        navigateToPeriod(stored.year, stored.month)
+    } else {
+        persistPeriod(stored.year, stored.month)
+    }
 }
 
 const handleYearUpdate = (value) => {
@@ -87,6 +314,25 @@ const handleMonthUpdate = (value) => {
     selectedMonth.value = value
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
+
+const handleToday = () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+
+    if (year === selectedYear.value && month === selectedMonth.value) {
+        navigateToPeriod(year, month)
+        return
+    }
+
+    selectedYear.value = year
+    selectedMonth.value = month
+    navigateToPeriod(year, month)
+}
+
+onMounted(() => {
+    tryApplyStoredPeriod()
+})
 
 const toTimestamp = (value) => {
     if (value === null || value === undefined) {
@@ -113,6 +359,9 @@ const accountSorters = {
     description: (row) => (row.source_name || '').toString().toLowerCase(),
     date: (row) => {
         if (row.type === 'individual_transaction') {
+            if (row.transaction_data?.posting_date) {
+                return toTimestamp(row.transaction_data.posting_date)
+            }
             if (row.transaction_data?.transaction_date) {
                 return toTimestamp(row.transaction_data.transaction_date)
             }
@@ -135,7 +384,7 @@ const accountSorters = {
 }
 
 const transactionSorters = {
-    date: (transaction) => toTimestamp(transaction.transaction_date),
+    date: (transaction) => toTimestamp(transaction.transaction_date || transaction.posting_date),
     posting_date: (transaction) => toTimestamp(transaction.posting_date || transaction.transaction_date),
     description: (transaction) => (transaction.description || '').toString().toLowerCase(),
     category: (transaction) => (transaction.category?.name || '').toString().toLowerCase(),
@@ -152,7 +401,11 @@ const transactionsForSelectedRow = computed(() => {
         const allTransactions = props.allTransactions || []
         items = allTransactions.filter(transaction =>
             transaction.cash_flow_source_id === selectedAccountRow.value.cash_flow_source_id &&
-            transaction.type === selectedAccountRow.value.transaction_type
+            (
+                selectedAccountRow.value.allows_refunds
+                    ? true
+                    : transaction.type === selectedAccountRow.value.transaction_type
+            )
         )
     } else if (selectedAccountRow.value.type === 'individual_transaction') {
         items = [selectedAccountRow.value.transaction_data]
@@ -178,7 +431,7 @@ const filteredTransactions = computed(() => {
     const items = transactionsForSelectedRow.value
 
     if (transactionDayFilter.value) {
-        return items.filter(transaction => getTransactionDateKey(transaction.transaction_date) === transactionDayFilter.value)
+        return items.filter(transaction => getTransactionDateKey(transaction.posting_date || transaction.transaction_date) === transactionDayFilter.value)
     }
 
     return items
@@ -194,7 +447,7 @@ const availableTransactionDays = computed(() => {
     const month = Number(selectedMonth.value)
     const daysInMonth = new Date(year, month, 0).getDate()
     const transactionsSet = new Set(
-        items.map(transaction => getTransactionDateKey(transaction.transaction_date))
+        items.map(transaction => getTransactionDateKey(transaction.posting_date || transaction.transaction_date))
     )
 
     const results = []
@@ -385,6 +638,108 @@ const clearAccountRowSelection = () => {
     selectedAccountTransactionIds.value = []
 }
 
+const openAssignCategoryModal = (context = 'account') => {
+    const selectionIds = getSelectionIdsForContext(context)
+
+    if (!selectionIds.length) {
+        return
+    }
+
+    assignCategoryContext.value = context
+
+    assignCategoryError.value = null
+
+    if (assignableCategories.value.length) {
+        assignCategorySelectedId.value = getCategoryOptionId(assignableCategories.value[0])
+    } else {
+        assignCategorySelectedId.value = ''
+    }
+
+    isAssignCategoryModalOpen.value = true
+}
+
+const closeAssignCategoryModal = () => {
+    isAssignCategoryModalOpen.value = false
+    assignCategoryError.value = null
+    assignCategorySelectedId.value = ''
+    assignCategoryContext.value = 'account'
+    pendingAssignContext.value = null
+}
+
+const openCategoryCreateModal = () => {
+    pendingAssignContext.value = {
+        context: assignCategoryContext.value,
+        selectionIds: assignCategorySelectionIds.value.map((id) => Number(id)),
+        type: assignCategoryType.value || null,
+    }
+    isCategoryCreateModalOpen.value = true
+}
+
+const closeCategoryCreateModal = () => {
+    isCategoryCreateModalOpen.value = false
+    pendingAssignContext.value = null
+}
+
+const submitAssignCategory = async () => {
+    if (!isAssignCategoryReady.value) {
+        if (!assignCategoryType.value) {
+            assignCategoryError.value = 'בחר תזרימים מאותו סוג (הכנסה או הוצאה) כדי לשייך לקטגוריה.'
+        } else if (!assignableCategories.value.length) {
+            assignCategoryError.value = 'לא קיימות קטגוריות מתאימות לשיוך.'
+        } else if (!assignCategorySelectedId.value) {
+            assignCategoryError.value = 'בחר קטגוריה לשיוך.'
+        }
+        return
+    }
+
+    isAssignCategorySubmitting.value = true
+    assignCategoryError.value = null
+
+    try {
+        const transactionIds = assignCategorySelectionIds.value
+            .map(id => Number(id))
+            .filter(Number.isFinite)
+
+        if (!transactionIds.length) {
+            assignCategoryError.value = 'לא נמצאו תזרימים תקינים לשיוך.'
+            return
+        }
+
+        const response = await fetch(route('budgets.manage.transactions.assign', assignCategorySelectedId.value), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                transaction_ids: transactionIds,
+            }),
+        })
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => null)
+            assignCategoryError.value = data?.message || 'נכשלה פעולת השיוך. נסה שוב.'
+            return
+        }
+
+        const context = assignCategoryContext.value
+        closeAssignCategoryModal()
+        clearSelectionForContext(context)
+        navigateToPeriod(selectedYear.value, selectedMonth.value)
+    } catch (error) {
+        console.error(error)
+        assignCategoryError.value = 'אירעה שגיאה בשיוך הקטגוריה.'
+    } finally {
+        isAssignCategorySubmitting.value = false
+    }
+}
+
+const handleCategoryCreateSaved = () => {
+    closeCategoryCreateModal()
+}
+
 const openCreateModal = () => {
     modalMode.value = 'create'
     editingTransaction.value = null
@@ -526,22 +881,6 @@ const toggleSelectAllAccountRows = (checked) => {
             .filter(Number.isFinite)
     } else {
         selectedAccountTransactionIds.value = []
-    }
-}
-
-const getSelectionIdsForContext = (context) => context === 'account'
-    ? selectedAccountTransactionIds.value
-    : selectedTransactionIds.value
-
-const hasSelectionForContext = (context) => context === 'account'
-    ? hasAccountSelection.value
-    : hasTransactionSelection.value
-
-const clearSelectionForContext = (context) => {
-    if (context === 'account') {
-        selectedAccountTransactionIds.value = []
-    } else {
-        selectedTransactionIds.value = []
     }
 }
 
@@ -742,16 +1081,20 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
           <template #header>
             <div class="flex flex-col gap-4 text-right">
                 <div class="flex w-full flex-row items-start gap-6 text-right">
-                    <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                    <div class="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
+                            <p class="text-xs text-gray-500">מצב העו"ש</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.accountStatus) }} ₪</p>
+                        </div>
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">יתרה</p>
                             <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">סה"כ הכנסות</p>
                             <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">סה"כ הוצאות</p>
                             <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
                         </div>
@@ -771,6 +1114,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                 :month-options="monthOptions"
                                 @update:year="handleYearUpdate"
                                 @update:month="handleMonthUpdate"
+                                @today="handleToday"
                             />
                         </div>
                     </div>
@@ -778,14 +1122,14 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
             </div>
         </template>
         
-        <div class="py-6">
-            <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
-                <div class="flex flex-col gap-8">
+        <div class="py-2">
+            <div class="mx-auto max-w-screen-2xl sm:px-6 lg:px-8">
+                <div class="flex flex-col gap-2">
                     <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
+                        <!-- <div>
                             <h3 class="text-lg font-medium text-gray-900 text-right">שורות עו"ש</h3>
                             <p class="text-sm text-gray-500">לחץ על שורה כדי לראות את פירוט העסקאות שלה.</p>
-                        </div>
+                        </div> -->
                         <div class="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
                             <button 
                                 @click="openCreateModal"
@@ -803,18 +1147,32 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                 <svg class="w-4 h-4 ml-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 12v9m0-9l-3 3m3-3l3 3M12 4H8m4-2H8a2 2 0 00-2 2v8m10-8h-4" />
                                 </svg>
-                                ייבוא מקובץ
+                                ייבוא נתונים
                             </Link>
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200">
-                            <div class="px-6 py-4 border-b border-gray-200 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <p class="text-xs text-gray-500">
-                                    ניתן לבחור שורות עו"ש מסוג תזרים בודד ולבצע שכפול או מחיקה מרובה.
-                                </p>
-                                <div class="flex flex-wrap items-center gap-2">
+                    <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+                        <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 lg:order-2">
+                            <div dir="rtl" class="px-6 py-4 border-b border-gray-200 flex flex-col gap-3">
+                                <div class="flex flex-col gap-1 text-right">
+                                    <div class="flex flex-wrap items-baseline justify-start gap-2">
+                                        <h3 class="text-lg font-medium text-gray-900 text-right">שורות עו"ש</h3>
+                                        <p class="text-sm text-gray-500">לחץ על שורה כדי לראות את פירוט העסקאות שלה.</p>
+                                    </div>
+                                    <p class="text-xs text-gray-500">
+                                        ניתן לבחור שורות עו"ש מסוג תזרים בודד ולבצע שכפול או מחיקה מרובה.
+                                    </p>
+                                </div>
+                                <div class="flex flex-wrap items-center justify-end gap-2">
+                                    <button
+                                        v-if="hasAccountSelection"
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        @click="openAssignCategoryModal('account')"
+                                    >
+                                        🗂️ שיוך לקטגוריה
+                                    </button>
                                     <button
                                         type="button"
                                         class="inline-flex items-center rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700 transition-colors hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
@@ -844,7 +1202,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                 </div>
                             </div>
                             <div class="overflow-x-auto">
-                                <table class="min-w-full divide-y divide-gray-200">
+                                <table dir="rtl" class="min-w-full divide-y divide-gray-200">
                                     <thead class="bg-gray-50">
                                         <tr>
                                             <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -933,7 +1291,9 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                             </td>
                                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                                                 <span v-if="row.type === 'individual_transaction'">
-                                                    {{ row.transaction_date }}
+                                                    <span v-if="row.transaction_date">
+                                                        {{ new Date(row.transaction_date).toLocaleDateString('he-IL') }}
+                                                    </span>
                                                 </span>
                                                 <span v-else class="text-gray-400">
                                                     סיכום
@@ -1027,21 +1387,57 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                             </div>
                         </div>
 
-                        <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200">
-                            <div class="px-6 py-4 border-b border-gray-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                <h3 class="text-lg font-medium text-gray-900 text-right">
-                                    פירוט עסקאות
-                                    <span v-if="selectedAccountRow" class="text-sm text-gray-500 mr-2">
-                                        - {{ selectedAccountRow.source_name }}
-                                        <span v-if="selectedAccountRow.type === 'cash_flow_source'">(מקור תזרים)</span>
-                                        <span v-else>(תזרים בודד)</span>
-                                    </span>
-                                </h3>
-                                <div v-if="selectedAccountRow" class="flex flex-wrap items-center gap-2">
-                                    <div ref="dayFilterContainer" class="relative">
-                                        <button
-                                            type="button"
-                                            class="inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                        <div dir="rtl" class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 lg:order-1">
+                            <div  class="px-6 py-4 border-b border-gray-200 flex flex-col gap-3">
+                                <div class="flex flex-col gap-2 text-right">
+                                    <div class="flex flex-wrap items-baseline gap-2">
+                                        <h3 class="text-lg font-medium text-gray-900">
+                                            פירוט עסקאות
+                                        </h3>
+                                        <p v-if="selectedAccountRow" class="text-sm text-gray-500">
+                                            {{ selectedAccountRow.source_name }}
+                                            <span v-if="selectedAccountRow.type === 'cash_flow_source'">– מקור תזרים</span>
+                                            <span v-else>– תזרים בודד</span>
+                                        </p>
+                                    </div>
+                                    <p v-if="!selectedAccountRow" class="text-sm text-gray-500">
+                                        בחר שורה מעו"ש כדי לראות את פירוט העסקאות.
+                                    </p>
+                                </div>
+                                <div
+                                    v-if="selectedAccountRow"
+                                    class="mt-2 flex w-full flex-wrap items-center gap-4 justify-start"
+                                    dir="ltr"
+                                >
+                                    <div class="flex flex-wrap items-center gap-3 text-gray-500" dir="rtl">
+                                        <template v-if="selectedAccountRow.type === 'cash_flow_source' && selectedAccountRow.allows_refunds">
+                                            <span class="flex items-center gap-1 text-xs">
+                                                <span class="font-semibold text-red-600">הוצאות:</span>
+                                                {{ formatCurrency(selectedAccountRow.total_expense_amount || 0) }} ₪
+                                            </span>
+                                            <span class="flex items-center gap-1 text-xs">
+                                                <span class="font-semibold text-green-600">זיכויים:</span>
+                                                {{ formatCurrency(selectedAccountRow.total_income_amount || 0) }} ₪
+                                            </span>
+                                            <span class="flex items-center gap-1 text-xs">
+                                                <span class="font-semibold text-gray-700">נטו:</span>
+                                                {{ selectedAccountRow.formatted_amount }} ₪
+                                            </span>
+                                        </template>
+                                    </div>
+                                    <button
+                                        v-if="hasTransactionSelection"
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        @click="openAssignCategoryModal('transactions')"
+                                    >
+                                        🗂️ שיוך לקטגוריה
+                                    </button>
+                                    <div class="flex flex-wrap items-center gap-2" dir="rtl">
+                                        <div ref="dayFilterContainer" class="relative">
+                                            <button
+                                                type="button"
+                                                class="inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
                                             :class="transactionDayFilter ? 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'"
                                             :disabled="!availableTransactionDays.length"
                                             @click.stop="toggleDayFilter"
@@ -1117,6 +1513,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                     >
                                         נקה בחירה
                                     </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1126,7 +1523,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                 </div>
 
                                 <div v-else>
-                                    <table class="min-w-full divide-y divide-gray-200">
+                                    <table dir="rtl" class="min-w-full divide-y divide-gray-200">
                                         <thead class="bg-gray-50">
                                             <tr>
                                                 <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1213,7 +1610,13 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                                     />
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
-                                                    {{ new Date(transaction.transaction_date).toLocaleDateString('he-IL') }}
+                                                    {{
+                                                        transaction.transaction_date
+                                                            ? new Date(transaction.transaction_date).toLocaleDateString('he-IL')
+                                                            : transaction.posting_date
+                                                                ? new Date(transaction.posting_date).toLocaleDateString('he-IL')
+                                                                : '-'
+                                                    }}
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                                                     {{ transaction.posting_date ? new Date(transaction.posting_date).toLocaleDateString('he-IL') : '-' }}
@@ -1299,6 +1702,95 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
             @transaction-updated="handleTransactionSaved"
             @transaction-deleted="handleTransactionDeleted"
         />
+
+        <BudgetManagerModal
+            :show="isCategoryCreateModalOpen"
+            mode="create"
+            :category="null"
+            :year="selectedYear"
+            :month="selectedMonth"
+            @close="closeCategoryCreateModal"
+            @saved="handleCategoryCreateSaved"
+        />
+
+        <Modal :show="isAssignCategoryModalOpen" @close="closeAssignCategoryModal">
+            <div class="space-y-4 p-6">
+                <h2 class="text-lg font-semibold text-gray-900">שיוך לקטגוריה</h2>
+                <p class="text-sm text-gray-600">
+                    בחר קטגוריה לשיוך {{ assignCategorySelectionCount }} תזרימים שנבחרו.
+                </p>
+
+                <div
+                    v-if="!assignCategoryType"
+                    class="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700"
+                >
+                    ניתן לשייך קטגוריה רק לתזרימים מאותו סוג (הכנסה או הוצאה).
+                </div>
+
+                <div
+                    v-else-if="!assignableCategories.length"
+                    class="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700"
+                >
+                    לא נמצאו קטגוריות מתאימות מסוג זה.
+                </div>
+
+                <div v-else class="space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label for="assign-category-select" class="block text-sm font-medium text-gray-700">בחר קטגוריה</label>
+                        <button
+                            type="button"
+                            class="inline-flex items-center rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
+                            @click="openCategoryCreateModal"
+                        >
+                            ➕ הוספת קטגוריה
+                        </button>
+                    </div>
+                    <select
+                        id="assign-category-select"
+                        v-model="assignCategorySelectedId"
+                        class="block w-full rounded-md border-gray-300 bg-white py-2 pl-3 pr-3 text-right text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                        <option
+                            v-for="category in assignableCategories"
+                            :key="getCategoryOptionId(category)"
+                            :value="getCategoryOptionId(category)"
+                        >
+                            {{ getCategoryOptionLabel(category) }}
+                        </option>
+                    </select>
+                </div>
+
+                <p v-if="assignCategoryError" class="text-sm text-red-600">{{ assignCategoryError }}</p>
+
+                <div class="flex items-center justify-end gap-2">
+                    <button
+                        type="button"
+                        class="inline-flex items-center rounded-md border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
+                        @click="closeAssignCategoryModal"
+                    >
+                        ביטול
+                    </button>
+                    <button
+                        type="button"
+                        class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        :disabled="isAssignCategorySubmitting || !isAssignCategoryReady"
+                        @click="submitAssignCategory"
+                    >
+                        <svg
+                            v-if="isAssignCategorySubmitting"
+                            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                        >
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                        </svg>
+                        שיוך
+                    </button>
+                </div>
+            </div>
+        </Modal>
 
         <Modal :show="isBulkDuplicateModalOpen" @close="closeBulkDuplicateModal">
             <div class="space-y-4 p-6">

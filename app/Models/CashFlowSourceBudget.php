@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 class CashFlowSourceBudget extends Model
 {
@@ -39,16 +40,31 @@ class CashFlowSourceBudget extends Model
     {
         $source = $this->cashFlowSource;
 
-        $query = $this->user->transactions()
-            ->where('cash_flow_source_id', $this->cash_flow_source_id)
-            ->whereYear('transaction_date', $this->year)
-            ->whereMonth('transaction_date', $this->month);
+        $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
 
-        if ($source?->type) {
-            $query->where('type', $source->type);
+        $totals = $this->user->transactions()
+            ->select('type', DB::raw('SUM(amount) as total'))
+            ->where('cash_flow_source_id', $this->cash_flow_source_id)
+            ->whereYear($periodColumn, $this->year)
+            ->whereMonth($periodColumn, $this->month)
+            ->groupBy('type')
+            ->pluck('total', 'type');
+
+        $incomeTotal = (float) ($totals['income'] ?? 0);
+        $expenseTotal = (float) ($totals['expense'] ?? 0);
+
+        if ($source?->allows_refunds) {
+            if ($source?->type === 'income') {
+                $this->spent_amount = $incomeTotal - $expenseTotal;
+            } else {
+                $this->spent_amount = $expenseTotal - $incomeTotal;
+            }
+        } else {
+            $this->spent_amount = $source?->type === 'income'
+                ? $incomeTotal
+                : $expenseTotal;
         }
 
-        $this->spent_amount = $query->sum('amount');
         $this->remaining_amount = $this->planned_amount - $this->spent_amount;
         $this->save();
     }

@@ -19,11 +19,14 @@ const props = defineProps({
 })
 
 const steps = [
-    { id: 1, title: 'טעינת קובץ' },
+    { id: 1, title: 'טעינת נתונים' },
     { id: 2, title: 'ניקוי שורות' },
     { id: 3, title: 'מיפוי שדות' },
     { id: 4, title: 'סקירה וייבוא' },
 ]
+
+const importMode = ref('file')
+const clipboardContent = ref('')
 
 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
 
@@ -31,6 +34,7 @@ const currentStep = ref(1)
 
 const uploadState = reactive({
     file: null,
+    source: 'file',
     importId: null,
     columns: [],
     rows: [],
@@ -143,6 +147,18 @@ const columnOptions = computed(() => {
             samples: column.sample_values || [],
         }
     })
+})
+
+const importSourceLabel = computed(() => {
+    if (uploadState.source === 'clipboard') {
+        return 'הדבקה מלוח אקסל'
+    }
+
+    if (uploadState.file?.name) {
+        return uploadState.file.name
+    }
+
+    return 'קובץ'
 })
 
 const headerRowOptions = computed(() => {
@@ -300,7 +316,14 @@ watch(selectedHeaderRow, (newValue, oldValue) => {
     excludedRows.value = Array.from(set).sort((a, b) => a - b)
 })
 
-function resetAllState() {
+function resetAllState(options = {}) {
+    const { preserveMode = true } = options
+
+    if (!preserveMode) {
+        importMode.value = 'file'
+    }
+
+    uploadState.source = importMode.value
     uploadState.file = null
     uploadState.importId = null
     uploadState.columns = []
@@ -337,6 +360,8 @@ function resetAllState() {
     previewState.lastUpdated = null
     commitState.success = null
     commitState.error = null
+    clipboardContent.value = ''
+    currentStep.value = 1
 }
 
 function setStep(stepId) {
@@ -347,6 +372,13 @@ function setStep(stepId) {
     if (stepId === 4 && !canProceedToReview.value) return
 
     currentStep.value = stepId
+}
+
+function setImportMode(mode) {
+    if (importMode.value === mode) return
+
+    importMode.value = mode
+    resetAllState()
 }
 
 function setRowExcluded(rowIndex, shouldExclude) {
@@ -517,6 +549,7 @@ async function handleFileChange(event) {
     const file = event.target.files?.[0]
     if (!file) return
 
+    uploadState.source = 'file'
     const maxBytes = props.maxUploadSizeMb * 1024 * 1024
     if (file.size > maxBytes) {
         uploadState.error = `גודל הקובץ גדול מהמקסימום (${props.maxUploadSizeMb}MB).`
@@ -570,6 +603,64 @@ async function handleFileChange(event) {
         event.target.value = ''
     }
 }
+
+async function handleClipboardAnalyze() {
+    if (importMode.value !== 'clipboard') {
+        return
+    }
+
+    const content = clipboardContent.value
+
+    if (!content || !content.trim()) {
+        uploadState.error = 'לא זוהו נתונים להדבקה. הדבק טבלה מגיליון ונסה שוב.'
+        return
+    }
+
+    uploadState.source = 'clipboard'
+    uploadState.loading = true
+    uploadState.error = null
+    commitState.success = null
+
+    try {
+        const response = await fetch(route('cashflow.import.paste'), {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': csrfToken,
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ content }),
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+            uploadState.error = data.message || 'ההדבקה נכשלה. וודא שהטבלה תקינה ונסה שוב.'
+            return
+        }
+
+        uploadState.file = null
+        uploadState.importId = data.import_id
+        uploadState.columns = data.columns || []
+        uploadState.rows = data.rows || []
+        uploadState.headerCandidates = data.header_candidates || []
+        uploadState.detectedDateRange = data.detected_date_range || { min: null, max: null }
+        uploadState.numericColumns = data.numeric_columns || []
+        uploadState.meta = data.meta || uploadState.meta
+
+        const autoExcluded = uploadState.rows.filter(row => row.auto_skip).map(row => row.index)
+        excludedRows.value = autoExcluded.sort((a, b) => a - b)
+
+        selectedHeaderRow.value = uploadState.headerCandidates[0] ?? null
+
+        autoMapColumns()
+        currentStep.value = 2
+    } catch (error) {
+        uploadState.error = 'אירעה שגיאה בעת עיבוד ההדבקה. נסה שוב מאוחר יותר.'
+    } finally {
+        uploadState.loading = false
+    }
+}
 </script>
 
 <template>
@@ -580,9 +671,9 @@ async function handleFileChange(event) {
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex items-center justify-between mb-6">
                     <div>
-                        <h1 class="text-2xl font-semibold text-gray-900">ייבוא תזרים מקובץ</h1>
+                        <h1 class="text-2xl font-semibold text-gray-900">ייבוא תזרים</h1>
                         <p class="mt-1 text-sm text-gray-500">
-                            תהליך הדרגתי: העלאת קובץ, ניקוי, מיפוי שדות ולבסוף ייבוא לתוך המערכת.
+                            תהליך הדרגתי: העלאת קובץ או הדבקת טבלה, ניקוי, מיפוי שדות ולבסוף ייבוא לתוך המערכת.
                         </p>
                     </div>
                     <button
@@ -629,55 +720,111 @@ async function handleFileChange(event) {
                 <div class="bg-white shadow-sm rounded-lg p-6">
                     <!-- Step 1: Upload -->
                     <div v-if="currentStep === 1">
-                        <h2 class="text-lg font-medium text-gray-900 mb-4">שלב 1: טעינת קובץ</h2>
+                        <h2 class="text-lg font-medium text-gray-900 mb-4">שלב 1: טעינת נתונים</h2>
                         <p class="text-sm text-gray-500 mb-4">
-                            אנו תומכים בקבצי Excel (xls, xlsx, xlsm) וקבצי CSV. הקובץ יסרק אוטומטית וננסה לזהות תאריכים, סכומים ותיאור התנועה.
+                            בחר אם להעלות קובץ או להדביק טבלה שהועתקה מאקסל או Google Sheets. ננתח את הנתונים ונזהה תאריכים, סכומים ותיאור תנועה.
                         </p>
 
-                        <label
-                            class="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100"
-                        >
-                            <div class="flex flex-col items-center justify-center pt-5 pb-6">
-                                <svg
-                                    class="w-8 h-8 mb-3 text-gray-400"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                    xmlns="http://www.w3.org/2000/svg"
+                        <div class="flex flex-wrap items-center justify-end gap-3 mb-5">
+                            <button
+                                type="button"
+                                class="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium border transition"
+                                :class="importMode === 'file' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'"
+                                @click="setImportMode('file')"
+                            >
+                                העלאת קובץ
+                            </button>
+                            <button
+                                type="button"
+                                class="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium border transition"
+                                :class="importMode === 'clipboard' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'"
+                                @click="setImportMode('clipboard')"
+                            >
+                                הדבקה מהלוח
+                            </button>
+                        </div>
+
+                        <div v-if="importMode === 'file'">
+                            <label
+                                class="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100"
+                            >
+                                <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                                    <svg
+                                        class="w-8 h-8 mb-3 text-gray-400"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            stroke-width="2"
+                                            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0ל-3 3m3-3v12"
+                                        ></path>
+                                    </svg>
+                                    <p class="mb-2 text-sm text-gray-500">
+                                        <span class="font-semibold">לחץ להעלאה</span> או גרור קובץ לכאן
+                                    </p>
+                                    <p class="text-xs text-gray-500">עד {{ maxUploadSizeMb }}MB</p>
+                                </div>
+                                <input
+                                    class="hidden"
+                                    type="file"
+                                    accept=".csv,.xls,.xlsx,.xlsm,.txt"
+                                    @change="handleFileChange"
+                                />
+                            </label>
+                        </div>
+                        <div v-else class="space-y-3">
+                            <label class="block text-sm font-semibold text-gray-700 text-right">
+                                הדבק כאן טבלה שהעתקת מגיליון
+                            </label>
+                            <textarea
+                                v-model="clipboardContent"
+                                rows="8"
+                                class="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm text-right"
+                                placeholder="הדבק כאן את הנתונים (Ctrl+V / Cmd+V)"
+                            ></textarea>
+                            <p class="text-xs text-gray-500 text-right">
+                                טיפ: בחר טווח תאים באקסל והשתמש בקיצור Ctrl+C / Cmd+C ולאחר מכן הדבק כאן.
+                            </p>
+                            <div class="flex items-center justify-end gap-2">
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-100 transition"
+                                    @click="clipboardContent = ''"
+                                    :disabled="uploadState.loading || !clipboardContent.trim()"
                                 >
-                                    <path
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        stroke-width="2"
-                                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                                    ></path>
-                                </svg>
-                                <p class="mb-2 text-sm text-gray-500">
-                                    <span class="font-semibold">לחץ להעלאה</span> או גרור קובץ לכאן
-                                </p>
-                                <p class="text-xs text-gray-500">עד {{ maxUploadSizeMb }}MB</p>
+                                    נקה טקסט
+                                </button>
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                                    :disabled="uploadState.loading"
+                                    @click="handleClipboardAnalyze"
+                                >
+                                    נתח נתונים
+                                </button>
                             </div>
-                            <input
-                                class="hidden"
-                                type="file"
-                                accept=".csv,.xls,.xlsx,.xlsm,.txt"
-                                @change="handleFileChange"
-                            />
-                        </label>
+                        </div>
 
                         <div v-if="uploadState.loading" class="mt-4 text-sm text-gray-500">
-                            טוען ומנתח את הקובץ... זה עשוי להימשך מספר שניות.
+                            מנתח את הנתונים... זה עשוי להימשך מספר שניות.
                         </div>
                         <div v-if="uploadState.error" class="mt-4 text-sm text-red-600">
                             {{ uploadState.error }}
                         </div>
                         <div
-                            v-if="uploadState.file && !uploadState.loading && !uploadState.error"
+                            v-if="uploadState.importId && !uploadState.loading && !uploadState.error"
                             class="mt-6 border rounded-lg p-4 bg-gray-50"
                         >
-                            <h3 class="text-sm font-semibold text-gray-700 mb-2">פרטי הקובץ</h3>
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">פרטי הייבוא</h3>
                             <ul class="text-sm text-gray-600 space-y-1">
-                                <li><span class="font-medium text-gray-800">שם:</span> {{ uploadState.file.name }}</li>
+                                <li><span class="font-medium text-gray-800">מקור:</span> {{ importSourceLabel }}</li>
+                                <li v-if="uploadState.file?.name && uploadState.source === 'file'">
+                                    <span class="font-medium text-gray-800">שם קובץ:</span> {{ uploadState.file.name }}
+                                </li>
                                 <li><span class="font-medium text-gray-800">שורות:</span> {{ uploadState.meta.total_rows }}</li>
                                 <li><span class="font-medium text-gray-800">טורים:</span> {{ uploadState.meta.total_columns }}</li>
                                 <li v-if="uploadState.detectedDateRange?.min">

@@ -23,6 +23,7 @@ class DashboardController extends Controller
         $totals = $this->calculateTotals($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
         $cashFlowSources = $this->getCashFlowSources($user);
+        $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
 
         return Inertia::render('Dashboard', [
             'user' => $user,
@@ -31,6 +32,7 @@ class DashboardController extends Controller
             'totalIncome' => $totals['income'],
             'totalExpenses' => $totals['expenses'],
             'balance' => $totals['balance'],
+            'accountStatus' => $accountStatus,
             'categoriesWithBudgets' => $categoriesWithBudgets,
             'cashFlowSources' => $cashFlowSources,
         ]);
@@ -47,6 +49,7 @@ class DashboardController extends Controller
         $transactions = $this->getTransactionsForPeriod($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
         $cashFlowSources = $this->getCashFlowSources($user);
+        $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
 
         return Inertia::render('Cashflow/Manage', [
             'user' => $user,
@@ -55,6 +58,7 @@ class DashboardController extends Controller
             'totalIncome' => $totals['income'],
             'totalExpenses' => $totals['expenses'],
             'balance' => $totals['balance'],
+            'accountStatus' => $accountStatus,
             'accountStatementRows' => $accountStatementRows,
             'allTransactions' => $transactions,
             'categoriesWithBudgets' => $categoriesWithBudgets,
@@ -70,6 +74,7 @@ class DashboardController extends Controller
 
         $totals = $this->calculateTotals($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
+        $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
 
         $budgets = $user->getOrCreateBudgetsForMonth($year, $month);
         $cashFlowSources = $this->getCashFlowSources($user);
@@ -82,6 +87,7 @@ class DashboardController extends Controller
             'totalIncome' => $totals['income'],
             'totalExpenses' => $totals['expenses'],
             'balance' => $totals['balance'],
+            'accountStatus' => $accountStatus,
             'categoriesWithBudgets' => $categoriesWithBudgets,
             'cashFlowSources' => $cashFlowSources,
             'allCategories' => $allCategories->map(function ($category) {
@@ -118,6 +124,7 @@ class DashboardController extends Controller
 
         $cashFlowSourcesWithStats = $this->getCashFlowSourcesWithStats($user, $year, $month);
         $activeCashFlowSources = $this->getCashFlowSources($user);
+        $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
         $allCashFlowSources = $user->cashFlowSources()->orderBy('name')->get()->map(function ($source) {
             return [
                 'id' => $source->id,
@@ -127,6 +134,7 @@ class DashboardController extends Controller
                 'icon' => $source->icon,
                 'description' => $source->description,
                 'is_active' => $source->is_active,
+                'allows_refunds' => $source->allows_refunds,
                 'created_at' => optional($source->created_at)->toIso8601String(),
                 'updated_at' => optional($source->updated_at)->toIso8601String(),
             ];
@@ -166,6 +174,7 @@ class DashboardController extends Controller
             'totalIncome' => $totals['income'],
             'totalExpenses' => $totals['expenses'],
             'balance' => $totals['balance'],
+            'accountStatus' => $accountStatus,
             'cashFlowSourcesWithStats' => $cashFlowSourcesWithStats,
             'cashFlowSources' => $activeCashFlowSources,
             'allCashFlowSources' => $allCashFlowSources,
@@ -194,63 +203,132 @@ class DashboardController extends Controller
         ];
     }
 
+    private function calculateAccountStatus($user, int $year, int $month): float
+    {
+        $periodEndDate = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+
+        $totals = $user->transactions()
+            ->whereNotNull('posting_date')
+            ->selectRaw("
+                SUM(
+                    CASE
+                        WHEN type = 'income'
+                        AND DATE(posting_date) <= ?
+                        THEN amount
+                        ELSE 0
+                    END
+                ) as total_income_until_period,
+                SUM(
+                    CASE
+                        WHEN type = 'expense'
+                        AND DATE(posting_date) <= ?
+                        THEN amount
+                        ELSE 0
+                    END
+                ) as total_expense_until_period
+            ", [$periodEndDate, $periodEndDate])
+            ->first();
+
+        if (!$totals) {
+            return 0.0;
+        }
+
+        $income = (float) ($totals->total_income_until_period ?? 0);
+        $expenses = (float) ($totals->total_expense_until_period ?? 0);
+
+        return $income - $expenses;
+    }
+
     private function buildAccountStatementRows($user, int $year, int $month)
     {
         $groupedBySource = $user->transactions()
             ->with(['cashFlowSource'])
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereNotNull('posting_date')
+            ->whereYear('posting_date', $year)
+            ->whereMonth('posting_date', $month)
             ->whereNotNull('cash_flow_source_id')
             ->select(
                 'cash_flow_source_id',
-                'type',
-                DB::raw('SUM(amount) as total_amount'),
+                DB::raw("SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as total_income"),
+                DB::raw("SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as total_expense"),
                 DB::raw('COUNT(*) as transaction_count'),
+                DB::raw('MAX(posting_date) as latest_posting_date'),
                 DB::raw('MAX(created_at) as latest_created_at'),
                 DB::raw('MAX(updated_at) as latest_updated_at')
             )
-            ->groupBy('cash_flow_source_id', 'type')
-            ->orderBy(DB::raw('MAX(updated_at)'), 'desc')
+            ->groupBy('cash_flow_source_id')
+            ->orderByDesc(DB::raw('MAX(posting_date)'))
             ->get()
             ->map(function ($group) {
                 $cashFlowSource = $group->cashFlowSource;
+                if (!$cashFlowSource) {
+                    return null;
+                }
+
+                $latestPostingDate = $group->latest_posting_date ? Carbon::parse($group->latest_posting_date) : null;
                 $latestUpdatedAt = $group->latest_updated_at ? Carbon::parse($group->latest_updated_at) : null;
                 $latestCreatedAt = $group->latest_created_at ? Carbon::parse($group->latest_created_at) : null;
-                $sortBase = $latestUpdatedAt ?? $latestCreatedAt;
+                $sortBase = $latestPostingDate ?? $latestUpdatedAt ?? $latestCreatedAt;
                 $sortTimestamp = $sortBase ? $sortBase->valueOf() : 0;
 
+                $incomeTotal = (float) ($group->total_income ?? 0);
+                $expenseTotal = (float) ($group->total_expense ?? 0);
+
+                if ($cashFlowSource->type === 'income') {
+                    $netAmount = $incomeTotal - $expenseTotal;
+                    $isPositive = $netAmount >= 0;
+                    $formattedAmount = $netAmount !== 0
+                        ? ($isPositive ? '+' : '-') . number_format(abs($netAmount), 2)
+                        : number_format(0, 2);
+                    $amountColor = $isPositive ? 'text-green-600' : 'text-red-600';
+                } else {
+                    $netAmount = $expenseTotal - $incomeTotal;
+                    $isPositive = $netAmount >= 0;
+                    $formattedAmount = $netAmount !== 0
+                        ? ($isPositive ? '-' : '+') . number_format(abs($netAmount), 2)
+                        : number_format(0, 2);
+                    $amountColor = $isPositive ? 'text-red-600' : 'text-green-600';
+                }
+
                 return [
-                    'id' => 'source_' . $group->cash_flow_source_id . '_' . $group->type,
+                    'id' => 'source_' . $group->cash_flow_source_id . '_' . $cashFlowSource->type,
                     'type' => 'cash_flow_source',
                     'cash_flow_source_id' => $group->cash_flow_source_id,
                     'source_name' => $cashFlowSource->name,
                     'source_color' => $cashFlowSource->color,
                     'source_icon' => $cashFlowSource->icon,
-                    'transaction_type' => $group->type,
-                    'total_amount' => $group->total_amount,
-                    'transaction_count' => $group->transaction_count,
-                    'formatted_amount' => $group->type === 'income' ? '+' . number_format($group->total_amount, 2) : '-' . number_format($group->total_amount, 2),
-                    'amount_color' => $group->type === 'income' ? 'text-green-600' : 'text-red-600',
+                    'allows_refunds' => $cashFlowSource->allows_refunds,
+                    'transaction_type' => $cashFlowSource->type,
+                    'total_amount' => $netAmount,
+                    'total_income_amount' => $incomeTotal,
+                    'total_expense_amount' => $expenseTotal,
+                    'transaction_count' => (int) $group->transaction_count,
+                    'formatted_amount' => $formattedAmount,
+                    'amount_color' => $amountColor,
                     'can_add_transactions' => true,
                     'latest_created_at' => optional($latestCreatedAt)->toIso8601String(),
                     'latest_updated_at' => optional($latestUpdatedAt)->toIso8601String(),
+                    'latest_posting_at' => optional($latestPostingDate)->toIso8601String(),
                     'created_timestamp' => optional($latestCreatedAt)->valueOf() ?? $sortTimestamp,
                     'updated_timestamp' => optional($latestUpdatedAt)->valueOf() ?? $sortTimestamp,
                     'sort_timestamp' => $sortTimestamp,
                 ];
-            });
+            })
+            ->filter();
 
         $individualTransactions = $user->transactions()
             ->with(['category'])
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereNotNull('posting_date')
+            ->whereYear('posting_date', $year)
+            ->whereMonth('posting_date', $month)
             ->whereNull('cash_flow_source_id')
-            ->orderBy('transaction_date', 'desc')
+            ->orderBy('posting_date', 'desc')
             ->get()
             ->map(function ($transaction) {
+                $postingDate = $transaction->posting_date;
                 $latestUpdatedAt = $transaction->updated_at;
                 $latestCreatedAt = $transaction->created_at;
-                $sortBase = $latestUpdatedAt ?? $latestCreatedAt;
+                $sortBase = $postingDate ?? $latestUpdatedAt ?? $latestCreatedAt;
                 $sortTimestamp = $sortBase ? $sortBase->valueOf() : 0;
 
                 return [
@@ -268,9 +346,12 @@ class DashboardController extends Controller
                     'formatted_amount' => $transaction->type === 'income' ? '+' . number_format($transaction->amount, 2) : '-' . number_format($transaction->amount, 2),
                     'amount_color' => $transaction->type === 'income' ? 'text-green-600' : 'text-red-600',
                     'can_add_transactions' => false,
-                    'transaction_date' => $transaction->transaction_date->format('d/m/Y'),
+                    'transaction_date' => $postingDate
+                        ? $postingDate->format('Y-m-d')
+                        : optional($transaction->transaction_date)->format('Y-m-d'),
                     'latest_created_at' => optional($latestCreatedAt)->toIso8601String(),
                     'latest_updated_at' => optional($latestUpdatedAt)->toIso8601String(),
+                    'latest_posting_at' => optional($postingDate)->toIso8601String(),
                     'created_timestamp' => optional($latestCreatedAt)->valueOf() ?? $sortTimestamp,
                     'updated_timestamp' => optional($latestUpdatedAt)->valueOf() ?? $sortTimestamp,
                     'sort_timestamp' => $sortTimestamp,
@@ -287,8 +368,9 @@ class DashboardController extends Controller
     {
         return $user->transactions()
             ->with(['category', 'cashFlowSource'])
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereNotNull('posting_date')
+            ->whereYear('posting_date', $year)
+            ->whereMonth('posting_date', $month)
             ->orderByDesc('updated_at')
             ->get();
     }
@@ -349,14 +431,16 @@ class DashboardController extends Controller
         $aggregates = $user->transactions()
             ->select(
                 'cash_flow_source_id',
-                DB::raw('SUM(amount) as total_amount'),
+                DB::raw("SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as total_income"),
+                DB::raw("SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as total_expense"),
                 DB::raw('COUNT(*) as transaction_count'),
-                DB::raw('MAX(transaction_date) as latest_transaction_date'),
+                DB::raw('MAX(posting_date) as latest_posting_date'),
                 DB::raw('MAX(created_at) as latest_created_at'),
                 DB::raw('MAX(updated_at) as latest_updated_at')
             )
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereNotNull('posting_date')
+            ->whereYear('posting_date', $year)
+            ->whereMonth('posting_date', $month)
             ->whereNotNull('cash_flow_source_id')
             ->groupBy('cash_flow_source_id')
             ->get()
@@ -372,8 +456,8 @@ class DashboardController extends Controller
             $aggregate = $aggregates->get($source->id);
             $budget = $budgets->get($source->id);
 
-            $latestTransactionDate = $aggregate?->latest_transaction_date
-                ? Carbon::parse($aggregate->latest_transaction_date)
+            $latestTransactionDate = $aggregate?->latest_posting_date
+                ? Carbon::parse($aggregate->latest_posting_date)
                 : null;
 
             $latestCreatedAt = $aggregate?->latest_created_at
@@ -384,12 +468,41 @@ class DashboardController extends Controller
                 ? Carbon::parse($aggregate->latest_updated_at)
                 : null;
 
-            $totalAmount = $aggregate?->total_amount ?? 0;
+            $incomeTotal = (float) ($aggregate?->total_income ?? 0);
+            $expenseTotal = (float) ($aggregate?->total_expense ?? 0);
             $transactionCount = $aggregate?->transaction_count ?? 0;
 
-            $formattedAmount = $totalAmount !== 0
-                ? ($source->type === 'income' ? '+' : '-') . number_format(abs($totalAmount), 2)
-                : number_format(0, 2);
+            if ($source->allows_refunds) {
+                if ($source->type === 'income') {
+                    $netAmount = $incomeTotal - $expenseTotal;
+                    $isPositive = $netAmount >= 0;
+                    $formattedAmount = $netAmount !== 0
+                        ? ($isPositive ? '+' : '-') . number_format(abs($netAmount), 2)
+                        : number_format(0, 2);
+                    $amountColor = $isPositive ? 'text-green-600' : 'text-red-600';
+                } else {
+                    $netAmount = $expenseTotal - $incomeTotal;
+                    $isPositive = $netAmount >= 0;
+                    $formattedAmount = $netAmount !== 0
+                        ? ($isPositive ? '-' : '+') . number_format(abs($netAmount), 2)
+                        : number_format(0, 2);
+                    $amountColor = $isPositive ? 'text-red-600' : 'text-green-600';
+                }
+            } else {
+                if ($source->type === 'income') {
+                    $netAmount = $incomeTotal;
+                    $formattedAmount = $incomeTotal !== 0
+                        ? '+' . number_format(abs($incomeTotal), 2)
+                        : number_format(0, 2);
+                    $amountColor = 'text-green-600';
+                } else {
+                    $netAmount = $expenseTotal;
+                    $formattedAmount = $expenseTotal !== 0
+                        ? '-' . number_format(abs($expenseTotal), 2)
+                        : number_format(0, 2);
+                    $amountColor = 'text-red-600';
+                }
+            }
 
             return [
                 'id' => $source->id,
@@ -399,12 +512,15 @@ class DashboardController extends Controller
                 'icon' => $source->icon,
                 'description' => $source->description,
                 'is_active' => $source->is_active,
+                'allows_refunds' => $source->allows_refunds,
                 'created_at' => optional($source->created_at)->toIso8601String(),
                 'updated_at' => optional($source->updated_at)->toIso8601String(),
-                'monthly_total_amount' => $totalAmount,
+                'monthly_total_amount' => $netAmount ?? 0.0,
+                'monthly_income_amount' => $incomeTotal,
+                'monthly_expense_amount' => $expenseTotal,
                 'monthly_transaction_count' => $transactionCount,
                 'monthly_formatted_amount' => $formattedAmount,
-                'monthly_amount_color' => $source->type === 'income' ? 'text-green-600' : 'text-red-600',
+                'monthly_amount_color' => $amountColor,
                 'latest_transaction_at' => optional($latestTransactionDate)->toIso8601String(),
                 'latest_transaction_date' => optional($latestTransactionDate)->toDateString(),
                 'latest_activity_timestamp' => optional($latestUpdatedAt ?? $latestCreatedAt)->valueOf(),

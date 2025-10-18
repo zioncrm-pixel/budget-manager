@@ -116,8 +116,8 @@ class CashflowImportProcessor
                 continue;
             }
 
-            if ($source && $source->type !== $type) {
-                $errors[] = $this->buildRowError($rowIndex, 'cash_flow_source_id', 'מקור התזרים שנבחר אינו תואם לסוג התזרים.', $values);
+            if ($source && $source->type !== $type && !$source->allows_refunds) {
+                $errors[] = $this->buildRowError($rowIndex, 'cash_flow_source_id', 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה.', $values);
                 continue;
             }
 

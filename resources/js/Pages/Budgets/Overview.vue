@@ -1,10 +1,11 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
 import BudgetManagerModal from '@/Components/BudgetManagerModal.vue'
 import CategoryTransactionsModal from '@/Components/CategoryTransactionsModal.vue'
+import { loadPeriod, savePeriod } from '@/utils/periodStorage'
 
 const props = defineProps({
     user: Object,
@@ -13,14 +14,18 @@ const props = defineProps({
     totalIncome: Number,
     totalExpenses: Number,
     balance: Number,
+    accountStatus: Number,
     categoriesWithBudgets: Array,
     cashFlowSources: Array,
     allCategories: Array,
     budgetsForMonth: Array,
 })
 
-const selectedYear = ref(Number(props.currentYear) || new Date().getFullYear())
-const selectedMonth = ref(Number(props.currentMonth) || new Date().getMonth() + 1)
+const defaultYear = Number(props.currentYear) || new Date().getFullYear()
+const defaultMonth = Number(props.currentMonth) || new Date().getMonth() + 1
+
+const selectedYear = ref(defaultYear)
+const selectedMonth = ref(defaultMonth)
 const isBudgetModalOpen = ref(false)
 const modalMode = ref('create')
 const selectedCategory = ref(null)
@@ -50,6 +55,20 @@ const selectedMonthLabel = computed(() => {
     return current?.label || selectedMonth.value
 })
 
+watch(
+    () => props.currentYear,
+    (value) => {
+        selectedYear.value = Number(value) || new Date().getFullYear()
+    }
+)
+
+watch(
+    () => props.currentMonth,
+    (value) => {
+        selectedMonth.value = Number(value) || new Date().getMonth() + 1
+    }
+)
+
 const formatCurrency = (amount) => {
     return new Intl.NumberFormat('he-IL', {
         minimumFractionDigits: 2,
@@ -71,11 +90,70 @@ const budgetProgressTextClass = (percentage) => {
     return 'text-green-600'
 }
 
-const navigateToPeriod = (year, month) => {
+const getContrastingTextColor = (hexColor) => {
+    if (typeof hexColor !== 'string') {
+        return '#111827'
+    }
+
+    const sanitized = hexColor.replace('#', '').trim()
+    if (!/^[0-9a-fA-F]{3,6}$/.test(sanitized)) {
+        return '#111827'
+    }
+
+    const normalized = sanitized.length === 3
+        ? sanitized.split('').map(char => char + char).join('')
+        : sanitized.padEnd(6, '0')
+
+    const r = parseInt(normalized.slice(0, 2), 16)
+    const g = parseInt(normalized.slice(2, 4), 16)
+    const b = parseInt(normalized.slice(4, 6), 16)
+
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return luminance > 0.6 ? '#111827' : '#FFFFFF'
+}
+
+const persistPeriod = (year, month) => {
+    if (typeof window === 'undefined') return
+    savePeriod(year, month)
+}
+
+const navigateToPeriod = (year, month, options = {}) => {
+    persistPeriod(year, month)
     router.visit(`/budgets/overview?year=${year}&month=${month}`, {
         preserveScroll: true,
         replace: true,
+        ...options,
     })
+}
+
+const tryApplyStoredPeriod = () => {
+    if (typeof window === 'undefined') {
+        return
+    }
+
+    const stored = loadPeriod()
+    const params = new URL(window.location.href).searchParams
+    const queryYear = Number(params.get('year'))
+    const queryMonth = Number(params.get('month'))
+    const hasValidQuery = Number.isInteger(queryYear) && Number.isInteger(queryMonth)
+
+    if (hasValidQuery) {
+        persistPeriod(queryYear, queryMonth)
+        return
+    }
+
+    if (!stored) {
+        persistPeriod(selectedYear.value, selectedMonth.value)
+        return
+    }
+
+    if (stored.year !== selectedYear.value || stored.month !== selectedMonth.value) {
+        selectedYear.value = stored.year
+        selectedMonth.value = stored.month
+        navigateToPeriod(stored.year, stored.month)
+    } else {
+        persistPeriod(stored.year, stored.month)
+    }
 }
 
 const handleYearUpdate = (value) => {
@@ -87,6 +165,25 @@ const handleMonthUpdate = (value) => {
     selectedMonth.value = value
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
+
+const handleToday = () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+
+    if (year === selectedYear.value && month === selectedMonth.value) {
+        navigateToPeriod(year, month)
+        return
+    }
+
+    selectedYear.value = year
+    selectedMonth.value = month
+    navigateToPeriod(year, month)
+}
+
+onMounted(() => {
+    tryApplyStoredPeriod()
+})
 
 const openNewCategoryModal = () => {
     modalMode.value = 'create'
@@ -183,16 +280,20 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
   <template #header>
             <div class="flex flex-col gap-4 text-right">
                 <div class="flex w-full flex-row items-start gap-6 text-right">
-                    <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                    <div class="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
+                            <p class="text-xs text-gray-500">מצב העו"ש</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.accountStatus) }} ₪</p>
+                        </div>
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">יתרה</p>
                             <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">סה"כ הכנסות</p>
                             <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-4 py-3 text-right">
+                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
                             <p class="text-xs text-gray-500">סה"כ הוצאות</p>
                             <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
                         </div>
@@ -212,6 +313,7 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                                 :month-options="monthOptions"
                                 @update:year="handleYearUpdate"
                                 @update:month="handleMonthUpdate"
+                                @today="handleToday"
                             />
                         </div>
                     </div>
@@ -251,7 +353,16 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                             >
                                 <div class="flex items-start justify-between gap-3">
                                     <div class="flex items-center gap-3">
-                                        <span class="text-3xl">{{ category.category_icon || '📁' }}</span>
+                                        <span
+                                            class="flex h-12 w-12 items-center justify-center rounded-md text-3xl shadow-sm ring-1 ring-black/5"
+                                            :style="{
+                                                backgroundColor: category.category_color || '#E5E7EB',
+                                                color: getContrastingTextColor(category.category_color || '#E5E7EB'),
+                                            }"
+                                            aria-hidden="true"
+                                        >
+                                            {{ category.category_icon || '📁' }}
+                                        </span>
                                         <div class="text-right">
                                             <h4 class="text-lg font-semibold text-gray-900">{{ category.category_name }}</h4>
                                             <div class="mt-2 flex items-center justify-end gap-2 text-xs">

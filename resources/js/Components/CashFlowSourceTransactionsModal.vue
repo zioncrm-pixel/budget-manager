@@ -7,6 +7,9 @@
                 </h2>
                 <p class="text-sm text-gray-500">
                     חודש {{ monthLabel }} {{ year }} · סה"כ {{ summary.transaction_count }} עסקאות · {{ formattedSummaryAmount }} ₪
+                    <template v-if="source?.allows_refunds">
+                        · הוצאות {{ formatCurrency(summaryExpense) }} ₪ · זיכויים {{ formatCurrency(summaryIncome) }} ₪
+                    </template>
                 </p>
             </div>
 
@@ -207,7 +210,7 @@ const emit = defineEmits(['close'])
 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
 
 const transactions = ref([])
-const summary = ref({ total_amount: 0, transaction_count: 0 })
+const summary = ref({ total_income: 0, total_expense: 0, net_amount: 0, transaction_count: 0 })
 const latestTransaction = ref(null)
 const isLoading = ref(false)
 const showTransactionModal = ref(false)
@@ -226,14 +229,25 @@ const monthLabel = computed(() => {
 })
 
 const formattedSummaryAmount = computed(() => {
-    const amount = Number(summary.value.total_amount || 0)
-    const sign = props.source?.type === 'income' ? '+' : '-'
-    const normalized = new Intl.NumberFormat('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(amount))
-    if (amount === 0) {
-        return normalized
+    const net = Number(summary.value.net_amount || 0)
+    const type = props.source?.type
+    const formatter = new Intl.NumberFormat('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+    if (!net) {
+        return formatter.format(0)
     }
-    return `${sign}${normalized}`
+
+    if (type === 'income') {
+        const sign = net >= 0 ? '+' : '-'
+        return `${sign}${formatter.format(Math.abs(net))}`
+    }
+
+    const sign = net >= 0 ? '-' : '+'
+    return `${sign}${formatter.format(Math.abs(net))}`
 })
+
+const summaryIncome = computed(() => Number(summary.value.total_income || 0))
+const summaryExpense = computed(() => Number(summary.value.total_expense || 0))
 
 const latestTransactionLabel = computed(() => {
     if (!latestTransaction.value) return 'אין נתונים'
@@ -283,7 +297,7 @@ watch(
 const fetchTransactions = async () => {
     if (!props.source) {
         transactions.value = []
-        summary.value = { total_amount: 0, transaction_count: 0 }
+        summary.value = { total_income: 0, total_expense: 0, net_amount: 0, transaction_count: 0 }
         latestTransaction.value = null
         return
     }
@@ -294,12 +308,12 @@ const fetchTransactions = async () => {
         const response = await fetch(route('cashflow.sources.transactions', props.source.id) + `?year=${props.year}&month=${props.month}`)
         const data = await response.json()
         transactions.value = data.transactions || []
-        summary.value = data.summary || { total_amount: 0, transaction_count: 0 }
+        summary.value = data.summary || { total_income: 0, total_expense: 0, net_amount: 0, transaction_count: 0 }
         latestTransaction.value = transactions.value.length ? transactions.value[0]?.transaction_date : null
     } catch (error) {
         console.error('Failed to fetch transactions', error)
         transactions.value = []
-        summary.value = { total_amount: 0, transaction_count: 0 }
+        summary.value = { total_income: 0, total_expense: 0, net_amount: 0, transaction_count: 0 }
         latestTransaction.value = null
     } finally {
         isLoading.value = false

@@ -93,9 +93,9 @@ class TransactionController extends Controller
                 ->where('user_id', $user->id)
                 ->firstOrFail();
 
-            if ($cashFlowSource->type !== $data['type']) {
+            if ($cashFlowSource->type !== $data['type'] && !$cashFlowSource->allows_refunds) {
                 return response()->json([
-                    'message' => 'מקור התזרים שנבחר אינו תואם לסוג התזרים',
+                    'message' => 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה',
                 ], 422);
             }
         }
@@ -166,9 +166,9 @@ class TransactionController extends Controller
                 ->where('user_id', $user->id)
                 ->firstOrFail();
 
-            if ($cashFlowSource->type !== $data['type']) {
+            if ($cashFlowSource->type !== $data['type'] && !$cashFlowSource->allows_refunds) {
                 return response()->json([
-                    'message' => 'מקור התזרים שנבחר אינו תואם לסוג התזרים',
+                    'message' => 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה',
                 ], 422);
             }
         }

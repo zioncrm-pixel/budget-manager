@@ -19,10 +19,14 @@ const props = defineProps({
     disabled: {
         type: Boolean,
         default: false,
-    }
+    },
+    showTodayButton: {
+        type: Boolean,
+        default: true,
+    },
 })
 
-const emit = defineEmits(['update:year', 'update:month'])
+const emit = defineEmits(['update:year', 'update:month', 'today'])
 
 const handleYearChange = (event) => {
     const value = parseInt(event.target.value, 10)
@@ -36,6 +40,10 @@ const handleMonthChange = (event) => {
     if (!Number.isNaN(value)) {
         emit('update:month', value)
     }
+}
+
+const handleTodayClick = () => {
+    emit('today')
 }
 </script>
 
@@ -76,5 +84,15 @@ const handleMonthChange = (event) => {
                 ▼
             </span>
         </div>
+
+        <button
+            v-if="showTodayButton"
+            type="button"
+            class="inline-flex items-center rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 transition-colors hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed"
+            :disabled="disabled"
+            @click="handleTodayClick"
+        >
+            היום
+        </button>
     </div>
 </template>

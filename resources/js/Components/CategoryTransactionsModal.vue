@@ -64,6 +64,7 @@
                                     <th class="px-4 py-2 text-right.text-xs.font-medium text-gray-500 uppercase tracking-wider">תיאור</th>
                                     <th class="px-4.py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">סכום</th>
                                     <th class="px-4.py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">מקור</th>
+                                    <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">קטגוריה</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
@@ -71,8 +72,8 @@
                                     <td class="px-4 py-3 text-right">
                                         <input type="checkbox" :value="transaction.id" v-model="selectedAvailableIds" />
                                     </td>
-                                    <td class="px-4 py-3 text-sm.text-gray-900 text-right">
-                                        {{ new Date(transaction.transaction_date).toLocaleDateString('he-IL') }}
+                                    <td class="px-4 py-3 text-sm text-gray-900 text-right">
+                                        {{ formatTransactionDate(transaction) }}
                                     </td>
                                     <td class="px-4 py-3 text-sm text-gray-900 text-right">
                                         {{ transaction.description }}
@@ -85,6 +86,12 @@
                                             {{ transaction.cash_flow_source.icon || '💳' }} {{ transaction.cash_flow_source.name }}
                                         </span>
                                         <span v-else class="text-gray-400">ללא מקור</span>
+                                    </td>
+                                    <td class="px-4 py-3 text-sm text-gray-900 text-right">
+                                        <span v-if="transaction.category">
+                                            {{ transaction.category.icon || '📁' }} {{ transaction.category.name }}
+                                        </span>
+                                        <span v-else class="text-gray-400">ללא קטגוריה</span>
                                     </td>
                                 </tr>
                             </tbody>
@@ -114,7 +121,7 @@
                             <tbody class="bg-white divide-y divide-gray-200">
                                 <tr v-for="transaction in transactions" :key="transaction.id" class="hover:bg-gray-50">
                                     <td class="px-4 py-3 text-sm text-gray-900 text-right">
-                                        {{ new Date(transaction.transaction_date).toLocaleDateString('he-IL') }}
+                                        {{ formatTransactionDate(transaction) }}
                                     </td>
                                     <td class="px-4.py-3 text-sm text-gray-900 text-right">
                                         {{ transaction.description }}
@@ -127,6 +134,12 @@
                                             {{ transaction.cash_flow_source.icon || '💳' }} {{ transaction.cash_flow_source.name }}
                                         </span>
                                         <span v-else class="text-gray-400">ללא מקור</span>
+                                    </td>
+                                    <td class="px-4 py-3 text-sm text-gray-900 text-right">
+                                        <span v-if="transaction.category">
+                                            {{ transaction.category.icon || '📁' }} {{ transaction.category.name }}
+                                        </span>
+                                        <span v-else class="text-gray-400">ללא קטגוריה</span>
                                     </td>
                                     <td class="px-4.py-3 text-sm text-gray-900.text-right">
                                         <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
@@ -296,6 +309,11 @@ const formatCurrency = (amount) => {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(amount || 0)
+}
+
+const formatTransactionDate = (transaction) => {
+    const value = transaction?.posting_date || transaction?.transaction_date
+    return value ? new Date(value).toLocaleDateString('he-IL') : '-'
 }
 
 const translateStatus = (status) => {

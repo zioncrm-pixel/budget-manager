@@ -82,8 +82,9 @@ class Transaction extends Model
     // Scope לקבלת עסקאות לפי חודש ושנה
     public function scopeForMonth($query, int $year, int $month)
     {
-        return $query->whereYear('transaction_date', $year)
-                    ->whereMonth('transaction_date', $month);
+        return $query->whereNotNull('posting_date')
+                    ->whereYear('posting_date', $year)
+                    ->whereMonth('posting_date', $month);
     }
 
     // Scope לקבלת עסקאות לפי סוג

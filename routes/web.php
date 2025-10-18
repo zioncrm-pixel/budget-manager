@@ -30,6 +30,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/cashflow/sources', [DashboardController::class, 'cashflowSources'])->name('cashflow.sources.index');
     Route::get('/cashflow/import', [CashflowImportController::class, 'index'])->name('cashflow.import.index');
     Route::post('/cashflow/import/upload', [CashflowImportController::class, 'upload'])->name('cashflow.import.upload');
+    Route::post('/cashflow/import/paste', [CashflowImportController::class, 'paste'])->name('cashflow.import.paste');
     Route::post('/cashflow/import/transform', [CashflowImportController::class, 'transform'])->name('cashflow.import.transform');
     Route::post('/cashflow/import/commit', [CashflowImportController::class, 'commit'])->name('cashflow.import.commit');
 

@@ -84,7 +84,7 @@ class TransactionController extends Controller
     {
         $request->validate([
             'type' => 'required|in:income,expense',
-            'category_id' => 'required|exists:categories,id',
+            'category_id' => 'nullable|exists:categories,id',
             'cash_flow_source_id' => 'nullable|exists:cash_flow_sources,id', // השתנה ל-nullable
             'amount' => 'required|numeric|min:0.01',
             'transaction_date' => 'required|date',
@@ -96,16 +96,20 @@ class TransactionController extends Controller
 
         $user = Auth::user();
         
-        // בדיקה שהקטגוריה שייכת למשתמש
-        $category = Category::where('id', $request->category_id)
-                           ->where('user_id', $user->id)
-                           ->firstOrFail();
-        
-        // בדיקה שהקטגוריה תואמת לסוג התזרים
-        if ($category->type !== $request->type) {
-            return back()->withErrors([
-                'category_id' => 'הקטגוריה שנבחרה אינה תואמת לסוג התזרים'
-            ]);
+        $category = null;
+
+        if ($request->filled('category_id')) {
+            // בדיקה שהקטגוריה שייכת למשתמש
+            $category = Category::where('id', $request->category_id)
+                               ->where('user_id', $user->id)
+                               ->firstOrFail();
+
+            // בדיקה שהקטגוריה תואמת לסוג התזרים
+            if ($category->type !== $request->type) {
+                return back()->withErrors([
+                    'category_id' => 'הקטגוריה שנבחרה אינה תואמת לסוג התזרים'
+                ]);
+            }
         }
 
         // בדיקה שמקור התזרים שייך למשתמש (אם נבחר)
@@ -114,11 +118,10 @@ class TransactionController extends Controller
             $cashFlowSource = CashFlowSource::where('id', $request->cash_flow_source_id)
                                           ->where('user_id', $user->id)
                                           ->firstOrFail();
-            
-            // בדיקה שמקור התזרים תואם לסוג התזרים
-            if ($cashFlowSource->type !== $request->type) {
+
+            if ($cashFlowSource->type !== $request->type && !$cashFlowSource->allows_refunds) {
                 return back()->withErrors([
-                    'cash_flow_source_id' => 'מקור התזרים שנבחר אינו תואם לסוג התזרים'
+                    'cash_flow_source_id' => 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה'
                 ]);
             }
         }
@@ -129,7 +132,7 @@ class TransactionController extends Controller
             // יצירת התזרים
             $transaction = Transaction::create([
                 'user_id' => $user->id,
-                'category_id' => $request->category_id,
+                'category_id' => $request->category_id ?: null,
                 'cash_flow_source_id' => $request->cash_flow_source_id ?? null,
                 'special_expense_id' => $request->special_expense_id ?? null,
                 'amount' => $request->amount,
@@ -143,7 +146,7 @@ class TransactionController extends Controller
             ]);
 
             // עדכון התקציב אם זה הוצאה
-            if ($request->type === 'expense') {
+            if ($request->type === 'expense' && $request->filled('category_id')) {
                 $this->updateBudget($user->id, $request->category_id, $request->transaction_date);
             }
 
@@ -233,9 +236,9 @@ class TransactionController extends Controller
                 ->where('user_id', $user->id)
                 ->firstOrFail();
 
-            if ($cashFlowSource->type !== $request->type) {
+            if ($cashFlowSource->type !== $request->type && !$cashFlowSource->allows_refunds) {
                 return back()->withErrors([
-                    'cash_flow_source_id' => 'מקור התזרים שנבחר אינו תואם לסוג התזרים'
+                    'cash_flow_source_id' => 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה'
                 ]);
             }
         }

@@ -43,19 +43,23 @@ class Category extends Model
     // פונקציה לחישוב סכום כולל לקטגוריה בחודש מסוים
     public function getTotalAmountForMonth(int $year, int $month): float
     {
+        $periodColumn = \DB::raw('COALESCE(posting_date, transaction_date)');
+
         return $this->transactions()
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereYear($periodColumn, $year)
+            ->whereMonth($periodColumn, $month)
             ->sum('amount');
     }
 
     // פונקציה לקבלת סכום הכנסות או הוצאות לקטגוריה בחודש מסוים
     public function getAmountByTypeForMonth(int $year, int $month, string $type): float
     {
+        $periodColumn = \DB::raw('COALESCE(posting_date, transaction_date)');
+
         return $this->transactions()
             ->where('type', $type)
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereYear($periodColumn, $year)
+            ->whereMonth($periodColumn, $month)
             ->sum('amount');
     }
 

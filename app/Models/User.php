@@ -152,8 +152,9 @@ class User extends Authenticatable
     {
         return $this->transactions()
             ->where('type', 'income')
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereNotNull('posting_date')
+            ->whereYear('posting_date', $year)
+            ->whereMonth('posting_date', $month)
             ->sum('amount');
     }
 
@@ -162,8 +163,9 @@ class User extends Authenticatable
     {
         return $this->transactions()
             ->where('type', 'expense')
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereNotNull('posting_date')
+            ->whereYear('posting_date', $year)
+            ->whereMonth('posting_date', $month)
             ->sum('amount');
     }
 
@@ -180,8 +182,9 @@ class User extends Authenticatable
     {
         return $this->transactions()
             ->whereNotNull('special_expense_id')
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereNotNull('posting_date')
+            ->whereYear('posting_date', $year)
+            ->whereMonth('posting_date', $month)
             ->sum('amount');
     }
 }

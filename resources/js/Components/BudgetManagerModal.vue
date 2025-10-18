@@ -40,26 +40,33 @@
 
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                        <InputLabel for="category_color" value="צבע (HEX)" />
-                        <TextInput
-                            id="category_color"
-                            v-model="form.color"
-                            type="text"
-                            class="mt-1 block w-full"
-                            placeholder="#3B82F6"
-                            required
-                        />
+                        <InputLabel for="category_color_hex" value="צבע" />
+                        <div class="mt-1 flex items-center gap-3">
+                            <input
+                                id="category_color_picker"
+                                v-model="form.color"
+                                type="color"
+                                class="h-10 w-12 rounded-md border border-gray-300 bg-white p-0"
+                                aria-label="בחר צבע"
+                            />
+                            <TextInput
+                                id="category_color_hex"
+                                v-model="form.color"
+                                type="text"
+                                class="block w-full"
+                                placeholder="#3B82F6"
+                                required
+                            />
+                        </div>
                         <InputError :message="form.errors.color" class="mt-2" />
                     </div>
 
                     <div>
-                        <InputLabel for="category_icon" value="אייקון" />
-                        <TextInput
-                            id="category_icon"
+                        <InputLabel for="category_icon_input" value="אייקון" />
+                        <IconPicker
+                            input-id="category_icon_input"
                             v-model="form.icon"
-                            type="text"
-                            class="mt-1 block w-full"
-                            placeholder="🎉 או שם אייקון"
+                            class="mt-1"
                         />
                         <InputError :message="form.errors.icon" class="mt-2" />
                     </div>
@@ -167,6 +174,7 @@ import TextInput from './TextInput.vue'
 import InputError from './InputError.vue'
 import PrimaryButton from './PrimaryButton.vue'
 import SecondaryButton from './SecondaryButton.vue'
+import IconPicker from './IconPicker.vue'
 
 const props = defineProps({
     show: {
@@ -307,6 +315,7 @@ const submitForm = async () => {
 
     const options = {
         preserveScroll: true,
+        preserveState: true,
         onSuccess: () => {
             isLoading.value = false
             emit('saved')

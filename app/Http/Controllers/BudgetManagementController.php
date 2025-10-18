@@ -33,7 +33,9 @@ class BudgetManagementController extends Controller
 
         $data['is_active'] = (bool) $data['is_active'];
 
-        DB::transaction(function () use ($user, $data): void {
+        $createdCategory = null;
+
+        DB::transaction(function () use ($user, $data, &$createdCategory): void {
             if (!empty($data['category_id'])) {
                 $category = Category::where('id', $data['category_id'])
                     ->where('user_id', $user->id)
@@ -57,6 +59,8 @@ class BudgetManagementController extends Controller
                     'description' => $data['description'] ?? null,
                     'is_active' => $data['is_active'],
                 ]);
+
+                $createdCategory = $category;
             }
 
             if (isset($data['planned_amount']) && $data['planned_amount'] !== null) {
@@ -77,6 +81,14 @@ class BudgetManagementController extends Controller
                 $budget->updateSpentAmount();
             }
         });
+
+        if ($createdCategory) {
+            session()->flash('created_category', [
+                'id' => $createdCategory->id,
+                'name' => $createdCategory->name,
+                'type' => $createdCategory->type,
+            ]);
+        }
 
         return back()->with('success', 'הקטגוריה נוספה בהצלחה');
     }
@@ -165,17 +177,14 @@ class BudgetManagementController extends Controller
         $year = (int) $request->get('year', now()->year);
         $month = (int) $request->get('month', now()->month);
 
+        $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
+
         $query = $category->transactions()
-            ->with(['cashFlowSource'])
-            ->orderByDesc('transaction_date');
+            ->with(['cashFlowSource', 'category'])
+            ->orderByDesc($periodColumn);
 
-        if ($request->filled('year')) {
-            $query->whereYear('transaction_date', $year);
-        }
-
-        if ($request->filled('month')) {
-            $query->whereMonth('transaction_date', $month);
-        }
+        $query->whereYear($periodColumn, $year)
+            ->whereMonth($periodColumn, $month);
 
         $transactions = $query->get()->map(function ($transaction) {
             return [
@@ -184,6 +193,7 @@ class BudgetManagementController extends Controller
                 'type' => $transaction->type,
                 'amount' => $transaction->amount,
                 'transaction_date' => $transaction->transaction_date->toDateString(),
+                'posting_date' => $transaction->posting_date?->toDateString(),
                 'description' => $transaction->description,
                 'notes' => $transaction->notes,
                 'reference_number' => $transaction->reference_number,
@@ -192,6 +202,11 @@ class BudgetManagementController extends Controller
                     'id' => $transaction->cashFlowSource->id,
                     'name' => $transaction->cashFlowSource->name,
                     'icon' => $transaction->cashFlowSource->icon,
+                ] : null,
+                'category' => $transaction->category ? [
+                    'id' => $transaction->category->id,
+                    'name' => $transaction->category->name,
+                    'icon' => $transaction->category->icon,
                 ] : null,
             ];
         });
@@ -209,12 +224,13 @@ class BudgetManagementController extends Controller
         $year = (int) $request->get('year', now()->year);
         $month = (int) $request->get('month', now()->month);
         $type = $request->get('type', $category->type);
+        $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
 
         $query = $user->transactions()
-            ->with(['cashFlowSource'])
+            ->with(['cashFlowSource', 'category'])
             ->where('type', $type)
-            ->whereYear('transaction_date', $year)
-            ->whereMonth('transaction_date', $month)
+            ->whereYear($periodColumn, $year)
+            ->whereMonth($periodColumn, $month)
             ->where(function ($q) use ($category) {
                 $q->whereNull('category_id')->orWhere('category_id', '!=', $category->id);
             });
@@ -230,18 +246,24 @@ class BudgetManagementController extends Controller
             }
         }
 
-        $transactions = $query->orderByDesc('transaction_date')->limit(100)->get()->map(function ($transaction) {
+        $transactions = $query->orderByDesc($periodColumn)->limit(100)->get()->map(function ($transaction) {
             return [
                 'id' => $transaction->id,
                 'category_id' => $transaction->category_id,
                 'description' => $transaction->description,
                 'amount' => $transaction->amount,
                 'transaction_date' => $transaction->transaction_date->toDateString(),
+                'posting_date' => $transaction->posting_date?->toDateString(),
                 'type' => $transaction->type,
                 'cash_flow_source' => $transaction->cashFlowSource ? [
                     'id' => $transaction->cashFlowSource->id,
                     'name' => $transaction->cashFlowSource->name,
                     'icon' => $transaction->cashFlowSource->icon,
+                ] : null,
+                'category' => $transaction->category ? [
+                    'id' => $transaction->category->id,
+                    'name' => $transaction->category->name,
+                    'icon' => $transaction->category->icon,
                 ] : null,
             ];
         });
@@ -276,9 +298,11 @@ class BudgetManagementController extends Controller
             $transaction->category_id = $category->id;
             $transaction->save();
 
-            if ($transaction->type === 'expense') {
-                $this->refreshBudget($user->id, $category->id, $transaction->transaction_date);
-            }
+            $this->refreshBudget(
+                $user->id,
+                $category->id,
+                $transaction->posting_date ?? $transaction->transaction_date
+            );
 
             $assigned[] = $transaction->id;
         }
@@ -337,13 +361,11 @@ class BudgetManagementController extends Controller
         abort_if($transaction->user_id !== Auth::id(), 403);
 
         if ($transaction->category_id === $category->id) {
-            $date = $transaction->transaction_date;
+            $date = $transaction->posting_date ?? $transaction->transaction_date;
             $transaction->category_id = null;
             $transaction->save();
 
-            if ($transaction->type === 'expense') {
-                $this->refreshBudget($category->user_id, $category->id, $date);
-            }
+            $this->refreshBudget($category->user_id, $category->id, $date);
         }
 
         return response()->json([

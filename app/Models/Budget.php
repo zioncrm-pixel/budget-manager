@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 class Budget extends Model
 {
@@ -40,13 +41,21 @@ class Budget extends Model
     // פונקציה לעדכון סכום שהוצא
     public function updateSpentAmount(): void
     {
-        $this->spent_amount = $this->user->transactions()
+        $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
+
+        $categoryType = $this->category?->type ?? 'expense';
+
+        $query = $this->user->transactions()
             ->where('category_id', $this->category_id)
-            ->where('type', 'expense')
-            ->whereYear('transaction_date', $this->year)
-            ->whereMonth('transaction_date', $this->month)
-            ->sum('amount');
-        
+            ->whereYear($periodColumn, $this->year)
+            ->whereMonth($periodColumn, $this->month);
+
+        if ($categoryType === 'income') {
+            $this->spent_amount = $query->where('type', 'income')->sum('amount');
+        } else {
+            $this->spent_amount = $query->where('type', 'expense')->sum('amount');
+        }
+
         $this->remaining_amount = $this->planned_amount - $this->spent_amount;
         $this->save();
     }

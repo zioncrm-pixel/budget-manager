@@ -33,7 +33,6 @@
                             v-model="form.category_id"
                             @change="onCategoryChange"
                             class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            :required="props.mode === 'create'"
                         >
                             <option value="">בחר קטגוריה</option>
                             <option

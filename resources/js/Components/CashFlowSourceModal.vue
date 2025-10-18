@@ -38,28 +38,50 @@
                     </div>
                 </div>
 
+                <div>
+                    <InputLabel value="אפשר זיכויים" />
+                    <label class="mt-3 inline-flex items-start gap-2 text-sm text-gray-700">
+                        <input
+                            type="checkbox"
+                            class="mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            v-model="form.allows_refunds"
+                        />
+                        <span>
+                            אפשר שיוך של עסקאות הפוכות (לדוגמה זיכויים) למקור זה. הסכומים ייקוזזו מהסך הכולל.
+                        </span>
+                    </label>
+                    <InputError :message="form.errors.allows_refunds" class="mt-2" />
+                </div>
+
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                        <InputLabel for="source_color" value="צבע (HEX)" />
-                        <TextInput
-                            id="source_color"
-                            v-model="form.color"
-                            type="text"
-                            class="mt-1 block w-full"
-                            placeholder="#3B82F6"
-                            required
-                        />
+                        <InputLabel for="source_color_hex" value="צבע" />
+                        <div class="mt-1 flex items-center gap-3">
+                            <input
+                                id="source_color_picker"
+                                v-model="form.color"
+                                type="color"
+                                class="h-10 w-12 rounded-md border border-gray-300 bg-white p-0"
+                                aria-label="בחר צבע"
+                            />
+                            <TextInput
+                                id="source_color_hex"
+                                v-model="form.color"
+                                type="text"
+                                class="block w-full"
+                                placeholder="#3B82F6"
+                                required
+                            />
+                        </div>
                         <InputError :message="form.errors.color" class="mt-2" />
                     </div>
 
                     <div>
-                        <InputLabel for="source_icon" value="אייקון" />
-                        <TextInput
-                            id="source_icon"
+                        <InputLabel for="source_icon_input" value="אייקון" />
+                        <IconPicker
+                            input-id="source_icon_input"
                             v-model="form.icon"
-                            type="text"
-                            class="mt-1 block w-full"
-                            placeholder="💼 או שם אייקון"
+                            class="mt-1"
                         />
                         <InputError :message="form.errors.icon" class="mt-2" />
                     </div>
@@ -219,6 +241,7 @@ import TextInput from './TextInput.vue'
 import InputError from './InputError.vue'
 import PrimaryButton from './PrimaryButton.vue'
 import SecondaryButton from './SecondaryButton.vue'
+import IconPicker from './IconPicker.vue'
 
 const props = defineProps({
     show: {
@@ -252,6 +275,7 @@ const form = useForm({
     icon: '',
     description: '',
     is_active: true,
+    allows_refunds: false,
     planned_amount: '',
     year: new Date().getFullYear(),
     month: new Date().getMonth() + 1,
@@ -285,6 +309,7 @@ const initializeForm = () => {
             icon: props.source.icon || '',
             description: props.source.description || '',
             is_active: props.source.is_active ?? true,
+            allows_refunds: props.source.allows_refunds ?? false,
             planned_amount: props.source.budget?.planned_amount ? Number(props.source.budget.planned_amount).toFixed(2) : '',
             year: props.source.budget?.year || props.year,
             month: props.source.budget?.month || props.month,
@@ -297,6 +322,7 @@ const initializeForm = () => {
             icon: '',
             description: '',
             is_active: true,
+            allows_refunds: false,
             planned_amount: '',
             year: props.year,
             month: props.month,
