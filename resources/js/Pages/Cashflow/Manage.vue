@@ -485,7 +485,6 @@ const formatDateForInput = (date) => {
 }
 
 const bulkMinDate = computed(() => formatDateForInput(new Date(selectedYear.value, selectedMonth.value - 1, 1)))
-const bulkMaxDate = computed(() => formatDateForInput(new Date(selectedYear.value, selectedMonth.value, 0)))
 const hasTransactionSelection = computed(() => selectedTransactionIds.value.length > 0)
 const selectedTransactionsCount = computed(() => selectedTransactionIds.value.length)
 const areAllTransactionsSelected = computed(() => {
@@ -1061,15 +1060,13 @@ watch(availableTransactionDays, (days) => {
     }
 })
 
-watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
+watch(bulkMinDate, (min) => {
     if (!bulkDuplicateDate.value) {
         return
     }
 
     if (bulkDuplicateDate.value < min) {
         bulkDuplicateDate.value = min
-    } else if (bulkDuplicateDate.value > max) {
-        bulkDuplicateDate.value = max
     }
 })
 </script>
@@ -1152,9 +1149,10 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-                        <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 lg:order-2">
-                            <div dir="rtl" class="px-6 py-4 border-b border-gray-200 flex flex-col gap-3">
+                    <div dir="rtl" class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+                        
+                        <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 lg:order-1">
+                            <div  class="px-6 py-4 border-b border-gray-200 flex flex-col gap-3">
                                 <div class="flex flex-col gap-1 text-right">
                                     <div class="flex flex-wrap items-baseline justify-start gap-2">
                                         <h3 class="text-lg font-medium text-gray-900 text-right">שורות עו"ש</h3>
@@ -1387,7 +1385,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                             </div>
                         </div>
 
-                        <div dir="rtl" class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 lg:order-1">
+                        <div  class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 lg:order-1">
                             <div  class="px-6 py-4 border-b border-gray-200 flex flex-col gap-3">
                                 <div class="flex flex-col gap-2 text-right">
                                     <div class="flex flex-wrap items-baseline gap-2">
@@ -1683,6 +1681,7 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                                 </div>
                             </div>
                         </div>
+
                     </div>
                 </div>
             </div>
@@ -1806,7 +1805,6 @@ watch([bulkMinDate, bulkMaxDate], ([min, max]) => {
                         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                         v-model="bulkDuplicateDate"
                         :min="bulkMinDate"
-                        :max="bulkMaxDate"
                     />
                     <p v-if="bulkDuplicateError" class="text-sm text-red-600">{{ bulkDuplicateError }}</p>
                 </div>

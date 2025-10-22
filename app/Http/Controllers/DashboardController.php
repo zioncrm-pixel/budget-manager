@@ -23,6 +23,7 @@ class DashboardController extends Controller
         $totals = $this->calculateTotals($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
         $cashFlowSources = $this->getCashFlowSources($user);
+        $transactions = $this->getTransactionsForPeriod($user, $year, $month);
         $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
 
         return Inertia::render('Dashboard', [
@@ -35,6 +36,7 @@ class DashboardController extends Controller
             'accountStatus' => $accountStatus,
             'categoriesWithBudgets' => $categoriesWithBudgets,
             'cashFlowSources' => $cashFlowSources,
+            'monthlyTransactions' => $transactions,
         ]);
     }
 
