@@ -45,15 +45,24 @@ class Budget extends Model
 
         $categoryType = $this->category?->type ?? 'expense';
 
-        $query = $this->user->transactions()
+        $baseQuery = $this->user->transactions()
             ->where('category_id', $this->category_id)
             ->whereYear($periodColumn, $this->year)
             ->whereMonth($periodColumn, $this->month);
 
-        if ($categoryType === 'income') {
-            $this->spent_amount = $query->where('type', 'income')->sum('amount');
-        } else {
-            $this->spent_amount = $query->where('type', 'expense')->sum('amount');
+        $expenseTotal = (clone $baseQuery)->where('type', 'expense')->sum('amount');
+        $incomeTotal = (clone $baseQuery)->where('type', 'income')->sum('amount');
+
+        switch ($categoryType) {
+            case 'income':
+                $this->spent_amount = $incomeTotal;
+                break;
+            case 'both':
+                $this->spent_amount = $expenseTotal - $incomeTotal;
+                break;
+            default:
+                $this->spent_amount = $expenseTotal;
+                break;
         }
 
         $this->remaining_amount = $this->planned_amount - $this->spent_amount;
@@ -63,8 +72,16 @@ class Budget extends Model
     // פונקציה לקבלת אחוז התקדמות
     public function getProgressPercentage(): float
     {
-        if ($this->planned_amount <= 0) return 0;
-        return round(($this->spent_amount / $this->planned_amount) * 100, 2);
+        $planned = (float) $this->planned_amount;
+        $effectiveSpent = max((float) $this->spent_amount, 0);
+
+        if ($planned <= 0) {
+            return $effectiveSpent > 0 ? 100.0 : 0.0;
+        }
+
+        $percentage = ($effectiveSpent / $planned) * 100;
+
+        return round(min(max($percentage, 0), 999), 2);
     }
 
     // פונקציה לקבלת צבע לפי מצב התקציב

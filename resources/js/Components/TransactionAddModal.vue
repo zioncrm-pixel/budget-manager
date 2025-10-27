@@ -307,8 +307,8 @@ const form = useForm({
 const filteredCategories = computed(() => {
     if (!form.type) return []
     return props.categories.filter((category) => {
-        const categoryType = category.type || category.category_type
-        return categoryType === form.type
+        const categoryType = (category.type || category.category_type || '').toString()
+        return categoryType === form.type || categoryType === 'both'
     })
 })
 

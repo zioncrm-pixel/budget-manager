@@ -119,7 +119,9 @@ class User extends Authenticatable
         }
 
         // קבלת קטגוריות הוצאות
-        $expenseCategories = $this->categories()->where('type', 'expense')->get();
+        $expenseCategories = $this->categories()
+            ->whereIn('type', ['expense', 'both'])
+            ->get();
         
         // חלוקת התקציב לפי קטגוריות (אפשר לשנות את האחוזים)
         $budgetPercentages = [

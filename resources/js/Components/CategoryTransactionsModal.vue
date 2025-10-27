@@ -53,9 +53,40 @@
                     <div v-if="availableTransactions.length === 0" class="py-8 text-center text-gray-500">
                         אין עסקאות פנויות המתאימות לקטגוריה זו בחודש {{ monthLabel }}.
                     </div>
-                    <div v-else class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
+                    <div v-else>
+                        <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <label class="relative w-full sm:max-w-xs">
+                                <span class="sr-only">חיפוש עסקאות</span>
+                                <input
+                                    v-model="searchTerm"
+                                    type="text"
+                                    class="w-full rounded-md border border-gray-300 bg-white py-2 pr-3 pl-10 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="חיפוש לפי תיאור, מקור או קטגוריה"
+                                />
+                                <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400">
+                                    🔍
+                                </span>
+                                <button
+                                    v-if="hasSearchTerm"
+                                    type="button"
+                                    class="absolute inset-y-0 left-2 flex items-center text-gray-400 hover:text-gray-600"
+                                    @click="searchTerm = ''"
+                                >
+                                    ✕
+                                </button>
+                            </label>
+                            <span v-if="hasSearchTerm && filteredAvailableTransactions.length" class="text-xs text-gray-500">
+                                נמצאו {{ filteredAvailableTransactions.length }} תוצאות לחיפוש
+                            </span>
+                        </div>
+
+                        <div v-if="hasSearchTerm && filteredAvailableTransactions.length === 0" class="py-8 text-center text-gray-500">
+                            לא נמצאו עסקאות התואמות לחיפוש "{{ searchTermTrimmed }}".
+                        </div>
+
+                        <div v-else class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
                                 <tr>
                                     <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         <input type="checkbox" @change="toggleSelectAll($event.target.checked)" :checked="allSelected" />
@@ -66,9 +97,9 @@
                                     <th class="px-4.py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">מקור</th>
                                     <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">קטגוריה</th>
                                 </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                <tr v-for="transaction in availableTransactions" :key="transaction.id" class="hover:bg-gray-50">
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                <tr v-for="transaction in filteredAvailableTransactions" :key="transaction.id" class="hover:bg-gray-50">
                                     <td class="px-4 py-3 text-right">
                                         <input type="checkbox" :value="transaction.id" v-model="selectedAvailableIds" />
                                     </td>
@@ -94,8 +125,9 @@
                                         <span v-else class="text-gray-400">ללא קטגוריה</span>
                                     </td>
                                 </tr>
-                            </tbody>
-                        </table>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -217,6 +249,45 @@ const isLoadingAvailable = ref(false)
 const isAssigning = ref(false)
 const availableTransactions = ref([])
 const selectedAvailableIds = ref([])
+const searchTerm = ref('')
+
+const searchTermTrimmed = computed(() => searchTerm.value.trim())
+const normalizedSearch = computed(() => searchTermTrimmed.value.toLowerCase())
+const hasSearchTerm = computed(() => normalizedSearch.value.length > 0)
+
+const filteredAvailableTransactions = computed(() => {
+    if (!hasSearchTerm.value) {
+        return availableTransactions.value
+    }
+
+    const term = normalizedSearch.value
+
+    return availableTransactions.value.filter((transaction) => {
+        const description = (transaction?.description || '').toString().toLowerCase()
+        const sourceName = (transaction?.cash_flow_source?.name || '').toString().toLowerCase()
+        const categoryName = (transaction?.category?.name || '').toString().toLowerCase()
+        const amountString = transaction?.amount !== undefined && transaction?.amount !== null
+            ? String(transaction.amount).toLowerCase()
+            : ''
+        const dateValue = transaction?.posting_date || transaction?.transaction_date
+        let dateString = ''
+
+        if (dateValue) {
+            const parsedDate = new Date(dateValue)
+            if (!Number.isNaN(parsedDate.getTime())) {
+                dateString = parsedDate.toLocaleDateString('he-IL').toLowerCase()
+            }
+        }
+
+        return [
+            description,
+            sourceName,
+            categoryName,
+            amountString,
+            dateString,
+        ].some((value) => value.includes(term))
+    })
+})
 
 const monthLabel = computed(() => {
     const months = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר']
@@ -224,8 +295,9 @@ const monthLabel = computed(() => {
 })
 
 const allSelected = computed(() => {
-    if (!availableTransactions.value.length) return false
-    return selectedAvailableIds.value.length === availableTransactions.value.length
+    const visible = filteredAvailableTransactions.value
+    if (!visible.length) return false
+    return visible.every((transaction) => selectedAvailableIds.value.includes(transaction.id))
 })
 
 watch(
@@ -331,6 +403,7 @@ const translateStatus = (status) => {
 
 const enterSelectionMode = () => {
     selectionMode.value = true
+    searchTerm.value = ''
     fetchAvailableTransactions()
 }
 
@@ -339,14 +412,24 @@ const exitSelectionMode = () => {
     isLoadingAvailable.value = false
     availableTransactions.value = []
     selectedAvailableIds.value = []
+    searchTerm.value = ''
 }
 
 const toggleSelectAll = (checked) => {
-    if (checked) {
-        selectedAvailableIds.value = availableTransactions.value.map((transaction) => transaction.id)
-    } else {
-        selectedAvailableIds.value = []
+    const visibleIds = filteredAvailableTransactions.value.map((transaction) => transaction.id)
+
+    if (!visibleIds.length) {
+        return
     }
+
+    if (checked) {
+        const merged = new Set(selectedAvailableIds.value)
+        visibleIds.forEach((id) => merged.add(id))
+        selectedAvailableIds.value = Array.from(merged)
+        return
+    }
+
+    selectedAvailableIds.value = selectedAvailableIds.value.filter((id) => !visibleIds.includes(id))
 }
 
 const assignSelected = async () => {

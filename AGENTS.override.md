@@ -22,13 +22,15 @@ Code, comments, file names: **English**.
 ---
 
 ## 📁 Project Structure
+```text
 app/Models
 ├─ Budget.php
-├─ Transaction.php
+├─ CashFlowSource.php
+├─ CashFlowSourceBudget.php
 ├─ Category.php
-├─ CashFlowSource(.php / Budget.php)
 ├─ SpecialExpense.php
 ├─ SystemSetting.php
+├─ Transaction.php
 └─ User.php
 
 resources/js
@@ -44,12 +46,13 @@ routes/
 ├─ api.php
 ├─ auth.php
 └─ console.php
-
-
+```
 
 ---
 
 ## 🧩 Build & Run
+- Install PHP dependencies: `composer install`
+- Install frontend dependencies: `npm install`
 - Start backend: `php artisan serve`
 - Start frontend (Vite): `npm run dev`
 - Build frontend: `npm run build`
@@ -82,3 +85,4 @@ routes/
 php artisan make:model Transaction -mcr
 php artisan migrate:fresh --seed
 npm run dev
+```

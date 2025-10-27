@@ -81,7 +81,7 @@ class TransactionController extends Controller
             ->where('user_id', $user->id)
             ->firstOrFail();
 
-        if ($category->type !== $data['type']) {
+        if ($category->type !== 'both' && $category->type !== $data['type']) {
             return response()->json([
                 'message' => 'הקטגוריה שנבחרה אינה תואמת לסוג התזרים',
             ], 422);
@@ -154,7 +154,7 @@ class TransactionController extends Controller
             ->where('user_id', $user->id)
             ->firstOrFail();
 
-        if ($category->type !== $data['type']) {
+        if ($category->type !== 'both' && $category->type !== $data['type']) {
             return response()->json([
                 'message' => 'הקטגוריה שנבחרה אינה תואמת לסוג התזרים',
             ], 422);

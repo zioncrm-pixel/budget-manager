@@ -66,8 +66,8 @@
                             
                             <div class="grid grid-cols-2 gap-4 text-sm">
                                 <div class="text-center">
-                                    <div class="text-gray-500">הוצא עד כה</div>
-                                    <div class="font-semibold text-red-600">{{ formatCurrency(budgetData.spent_amount || 0) }}</div>
+                                    <div class="text-gray-500">הוצאה נטו</div>
+                                    <div class="font-semibold" :class="spentAmountClass">{{ formatCurrency(spentAmountValue) }}</div>
                                 </div>
                                 <div class="text-center">
                                     <div class="text-gray-500">נותר</div>
@@ -85,11 +85,11 @@
                                 </div>
                                 <div class="w-full bg-gray-200 rounded-full h-2">
                                     <div class="h-2 rounded-full transition-all duration-300 bg-blue-500"
-                                         :style="{ width: form.planned_amount > 0 ? Math.min((budgetData.spent_amount / form.planned_amount) * 100, 100) + '%' : '0%' }">
+                                         :style="{ width: form.planned_amount > 0 ? Math.min((Math.max(spentAmountValue, 0) / form.planned_amount) * 100, 100) + '%' : '0%' }">
                                     </div>
                                 </div>
                                 <div class="text-xs text-gray-500 text-center mt-1">
-                                    {{ form.planned_amount > 0 ? Math.round((budgetData.spent_amount / form.planned_amount) * 100) : 0 }}% נוצל
+                                    {{ form.planned_amount > 0 ? Math.round((Math.max(spentAmountValue, 0) / form.planned_amount) * 100) : 0 }}% נוצל
                                 </div>
                             </div>
                         </div>
@@ -151,8 +151,23 @@ const form = ref({
 })
 
 // Computed
+const spentAmountValue = computed(() => Number(props.budgetData.spent_amount ?? 0))
+
+const spentAmountClass = computed(() => {
+    if (spentAmountValue.value < 0) {
+        return 'text-green-600'
+    }
+
+    if (spentAmountValue.value === 0) {
+        return 'text-gray-600'
+    }
+
+    return 'text-red-600'
+})
+
 const calculateRemainingAmount = computed(() => {
-    return Math.max(0, form.value.planned_amount - props.budgetData.spent_amount)
+    const planned = Number(form.value.planned_amount ?? 0)
+    return planned - spentAmountValue.value
 })
 
 // Methods
@@ -168,11 +183,11 @@ const resetForm = () => {
 
 const getRemainingAmountColor = () => {
     const remaining = calculateRemainingAmount.value
-    const spent = props.budgetData.spent_amount
-    const planned = form.value.planned_amount
-    
+    const planned = Number(form.value.planned_amount ?? 0)
+
     if (planned <= 0) return 'text-gray-600'
-    if (remaining <= 0) return 'text-red-600'
+    if (remaining < 0) return 'text-red-600'
+    if (remaining === 0) return 'text-gray-600'
     if (remaining < planned * 0.1) return 'text-orange-600'
     if (remaining < planned * 0.25) return 'text-yellow-600'
     return 'text-green-600'

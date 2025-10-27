@@ -4,6 +4,8 @@ import { Head, router, Link } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import TransactionAddModal from '@/Components/TransactionAddModal.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
+import IncomeExpenseChart from '@/Components/IncomeExpenseChart.vue'
+import CategoryExpenseChart from '@/Components/CategoryExpenseChart.vue'
 import { loadPeriod, savePeriod } from '@/utils/periodStorage'
 
 const props = defineProps({
@@ -17,6 +19,8 @@ const props = defineProps({
     categoriesWithBudgets: Array,
     cashFlowSources: Array,
     monthlyTransactions: Array,
+    incomeExpenseChart: Object,
+    categoryExpenseChart: Object,
 })
 
 const defaultYear = Number(props.currentYear) || new Date().getFullYear()
@@ -154,6 +158,38 @@ const formatCurrency = (amount) => {
         maximumFractionDigits: 2,
     }).format(amount || 0)
 }
+
+const balanceTrend = computed(() => {
+    const value = Number(props.balance) || 0
+
+    if (value > 0) {
+        return {
+            direction: 'positive',
+            arrow: '▲',
+            arrowClass: 'text-green-600',
+            badgeClass: 'bg-green-100',
+            amountClass: 'text-green-600',
+        }
+    }
+
+    if (value < 0) {
+        return {
+            direction: 'negative',
+            arrow: '▼',
+            arrowClass: 'text-red-600',
+            badgeClass: 'bg-red-100',
+            amountClass: 'text-red-600',
+        }
+    }
+
+    return {
+        direction: 'neutral',
+        arrow: '',
+        arrowClass: 'text-gray-500',
+        badgeClass: 'bg-gray-100',
+        amountClass: 'text-gray-700',
+    }
+})
 
 const parseDate = (value) => {
     if (!value) {
@@ -587,21 +623,7 @@ watch(horizontalSourceOptions, (options) => {
         <div class="py-6">
             <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
                 <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200">
-                        <div class="p-4 flex items-center gap-4">
-                            <div class="flex-shrink-0">
-                                <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                                    <span class="text-blue-600 text-xl">💰</span>
-                                </div>
-                            </div>
-                            <div class="flex-1 text-right">
-                                <p class="text-sm font-medium text-gray-500">מצב העו"ש</p>
-                                <p class="text-2xl font-bold text-gray-900">
-                                    {{ formatCurrency(props.accountStatus) }}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
+                    
 
                     <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200">
                         <div class="p-4 flex items-center gap-4">
@@ -644,64 +666,54 @@ watch(horizontalSourceOptions, (options) => {
                             </div>
                             <div class="flex-1 text-right">
                                 <p class="text-sm font-medium text-gray-500">יתרה</p>
-                                <p class="text-2xl font-bold text-green-600">
-                                    {{ formatCurrency(props.balance) }}
+                                <div class="flex items-center justify-end gap-2">
+                                    <p class="text-2xl font-bold" :class="balanceTrend.amountClass">
+                                        {{ formatCurrency(props.balance) }}
+                                    </p>
+                                    <span
+                                        v-if="balanceTrend.direction !== 'neutral'"
+                                        class="inline-flex h-8 w-8 items-center justify-center rounded-full text-lg"
+                                        :class="[balanceTrend.badgeClass, balanceTrend.arrowClass]"
+                                    >
+                                        {{ balanceTrend.arrow }}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200">
+                        <div class="p-4 flex items-center gap-4">
+                            <div class="flex-shrink-0">
+                                <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                                    <span class="text-blue-600 text-xl">💰</span>
+                                </div>
+                            </div>
+                            <div class="flex-1 text-right">
+                                <p class="text-sm font-medium text-gray-500">מצב העו"ש</p>
+                                <p class="text-2xl font-bold text-gray-900">
+                                    {{ formatCurrency(props.accountStatus) }}
                                 </p>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                
+                <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 mt-8">
+                    <div class="p-6">
+                        <IncomeExpenseChart
+                            :chart-data="props.incomeExpenseChart"
+                            :selected-year="selectedYear"
+                            :selected-month="selectedMonth"
+                        />
                     </div>
                 </div>
 
                 <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 mt-8">
                     <div class="p-6">
-                        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                            <div>
-                                <h3 class="text-lg font-medium text-gray-900 text-right">
-                                    ניהול תזרימים
-                                </h3>
-                                <p class="text-sm text-gray-500">
-                                    הוסף תזרים חדש או עבור למסך ניהול התזרימים המלא.
-                                </p>
-                            </div>
-                            <div class="flex flex-wrap items-center gap-3 justify-end">
-                                <Link
-                                    :href="route('cashflow.index', { year: selectedYear, month: selectedMonth })"
-                                    class="inline-flex items-center px-4 py-2 border border-indigo-500 text-indigo-600 rounded-md text-xs font-semibold uppercase tracking-widest hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                                >
-                                    מעבר לניהול תזרים
-                                </Link>
-                                <button 
-                                    @click="openTransactionModal"
-                                    class="inline-flex items-center px-4 py-2 bg-indigo-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-indigo-700 focus:bg-indigo-700 active:bg-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150"
-                                >
-                                    <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                                    </svg>
-                                    הוסף תזרים
-                                </button>
-                                <Link
-                                    :href="route('cashflow.import.index')"
-                                    class="inline-flex items-center px-4 py-2 bg-white border border-indigo-500 rounded-md font-semibold text-xs text-indigo-600 uppercase tracking-widest hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150"
-                                >
-                                    ייבוא נתונים
-                                </Link>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 mt-8">
-                    <div class="p-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                            <h3 class="text-lg font-medium text-gray-900 text-right">קטגוריות ותקציבים</h3>
-                            <p class="text-sm text-gray-500">עבור למסך הייעודי כדי לראות ולערוך את כל התקציבים.</p>
-                        </div>
-                        <Link
-                            :href="route('budgets.overview', { year: selectedYear, month: selectedMonth })"
-                            class="inline-flex items-center px-4 py-2 bg-white border border-indigo-500 rounded-md font-semibold text-xs text-indigo-600 uppercase tracking-widest hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                        >
-                            ניהול קטגוריות ותקציבים
-                        </Link>
+                        <CategoryExpenseChart
+                            :chart-data="props.categoryExpenseChart"
+                        />
                     </div>
                 </div>
 
@@ -903,7 +915,7 @@ watch(horizontalSourceOptions, (options) => {
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-200 mt-8">
                     <div class="p-6">
                         <div class="flex flex-col gap-1 text-right">

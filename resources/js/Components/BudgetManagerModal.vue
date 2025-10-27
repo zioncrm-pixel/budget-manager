@@ -33,6 +33,7 @@
                         >
                             <option value="income">הכנסה</option>
                             <option value="expense">הוצאה</option>
+                            <option value="both">הכנסה והוצאה</option>
                         </select>
                         <InputError :message="form.errors.type" class="mt-2" />
                     </div>

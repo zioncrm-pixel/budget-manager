@@ -69,6 +69,7 @@ class Category extends Model
         return match($type) {
             'income' => '#10B981', // ירוק להכנסות
             'expense' => '#EF4444', // אדום להוצאות
+            'both' => '#6366F1', // סגול לקטגוריות משולבות
             default => '#3B82F6' // כחול כברירת מחדל
         };
     }

@@ -122,6 +122,18 @@ const commitState = reactive({
     error: null,
 })
 
+const categoryTypeLabel = (type) => {
+    if (type === 'income') {
+        return 'הכנסה'
+    }
+
+    if (type === 'both') {
+        return 'הכנסה והוצאה'
+    }
+
+    return 'הוצאה'
+}
+
 const headerRowRecord = computed(() => {
     if (selectedHeaderRow.value === null) return null
     return uploadState.rows.find(row => row.index === selectedHeaderRow.value) || null
@@ -1338,7 +1350,7 @@ async function handleClipboardAnalyze() {
                                                 :key="category.id"
                                                 :value="category.id"
                                             >
-                                                {{ category.name }} ({{ category.type === 'income' ? 'הכנסה' : 'הוצאה' }})
+                                                {{ category.name }} ({{ categoryTypeLabel(category.type) }})
                                             </option>
                                         </select>
                                     </div>

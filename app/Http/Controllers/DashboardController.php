@@ -25,6 +25,8 @@ class DashboardController extends Controller
         $cashFlowSources = $this->getCashFlowSources($user);
         $transactions = $this->getTransactionsForPeriod($user, $year, $month);
         $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
+        $incomeExpenseChart = $this->buildIncomeExpenseChartData($user, (int) $year, (int) $month);
+        $categoryExpenseChart = $this->buildCategoryExpenseChartData($user, (int) $year, (int) $month);
 
         return Inertia::render('Dashboard', [
             'user' => $user,
@@ -37,6 +39,8 @@ class DashboardController extends Controller
             'categoriesWithBudgets' => $categoriesWithBudgets,
             'cashFlowSources' => $cashFlowSources,
             'monthlyTransactions' => $transactions,
+            'incomeExpenseChart' => $incomeExpenseChart,
+            'categoryExpenseChart' => $categoryExpenseChart,
         ]);
     }
 
@@ -203,6 +207,339 @@ class DashboardController extends Controller
             'expenses' => $expenses,
             'balance' => $income - $expenses,
         ];
+    }
+
+    private function buildIncomeExpenseChartData($user, int $year, int $month): array
+    {
+        $transactions = $user->transactions()
+            ->whereNotNull('posting_date')
+            ->get(['type', 'amount', 'posting_date']);
+
+        if ($transactions->isEmpty()) {
+            return [
+                'yearly' => [],
+                'monthly' => $this->buildMonthlySeries([], $year),
+                'weekly' => $this->buildWeeklySeries([], $year, $month),
+                'daily' => $this->buildDailySeries([], $year, $month),
+            ];
+        }
+
+        $transactions->transform(function ($transaction) {
+            $transaction->posting_date = Carbon::parse($transaction->posting_date);
+            return $transaction;
+        });
+
+        $yearly = $transactions
+            ->groupBy(fn ($transaction) => $transaction->posting_date->format('Y'))
+            ->map(function ($items, $key) {
+                return [
+                    'key' => (int) $key,
+                    'label' => (string) $key,
+                    'income' => round((float) $items->where('type', 'income')->sum('amount'), 2),
+                    'expense' => round((float) $items->where('type', 'expense')->sum('amount'), 2),
+                ];
+            })
+            ->sortKeys()
+            ->values()
+            ->all();
+
+        $yearTransactions = $transactions->filter(fn ($transaction) => (int) $transaction->posting_date->format('Y') === $year);
+        $monthly = $this->buildMonthlySeries($yearTransactions, $year);
+
+        $monthTransactions = $yearTransactions->filter(fn ($transaction) => (int) $transaction->posting_date->format('n') === $month);
+        $weekly = $this->buildWeeklySeries($monthTransactions, $year, $month);
+        $daily = $this->buildDailySeries($monthTransactions, $year, $month);
+
+        return [
+            'yearly' => $yearly,
+            'monthly' => $monthly,
+            'weekly' => $weekly,
+            'daily' => $daily,
+        ];
+    }
+
+    private function buildCategoryExpenseChartData($user, int $year, int $month): array
+    {
+        $transactions = $user->transactions()
+            ->with('category')
+            ->where('type', 'expense')
+            ->whereNotNull('posting_date')
+            ->get(['id', 'category_id', 'amount', 'posting_date']);
+
+        if ($transactions->isEmpty()) {
+            $monthlyLabels = collect(range(1, 12))
+                ->map(fn ($monthNumber) => $this->getMonthLabel($monthNumber))
+                ->values()
+                ->all();
+
+            $weeksInMonth = Carbon::create($year, $month, 1)->endOfMonth()->weekOfMonth ?: 1;
+            $weeklyLabels = collect(range(1, $weeksInMonth))
+                ->map(fn ($weekNumber) => 'שבוע ' . $weekNumber)
+                ->values()
+                ->all();
+
+            $daysInMonth = Carbon::create($year, $month, 1)->daysInMonth;
+            $dailyLabels = collect(range(1, $daysInMonth))
+                ->map(fn ($dayNumber) => str_pad((string) $dayNumber, 2, '0', STR_PAD_LEFT))
+                ->values()
+                ->all();
+
+            return [
+                'yearly' => ['labels' => [], 'datasets' => []],
+                'monthly' => ['labels' => $monthlyLabels, 'datasets' => []],
+                'weekly' => ['labels' => $weeklyLabels, 'datasets' => []],
+                'daily' => ['labels' => $dailyLabels, 'datasets' => []],
+            ];
+        }
+
+        $transactions->transform(function ($transaction) {
+            $transaction->posting_date = Carbon::parse($transaction->posting_date);
+            $transaction->abs_amount = abs((float) $transaction->amount);
+            $transaction->category_descriptor = $this->makeCategoryDescriptor($transaction->category);
+            return $transaction;
+        });
+
+        $categoryDescriptors = $transactions
+            ->pluck('category_descriptor')
+            ->unique('id')
+            ->values();
+
+        $yearDefinitions = $transactions
+            ->map(fn ($transaction) => (int) $transaction->posting_date->format('Y'))
+            ->unique()
+            ->sort()
+            ->map(fn ($yearValue) => [
+                'key' => $yearValue,
+                'label' => (string) $yearValue,
+            ])
+            ->values()
+            ->all();
+
+        $yearTransactions = $transactions->filter(
+            fn ($transaction) => (int) $transaction->posting_date->format('Y') === $year
+        );
+
+        $monthDefinitions = collect(range(1, 12))
+            ->map(fn ($monthNumber) => [
+                'key' => $monthNumber,
+                'label' => $this->getMonthLabel($monthNumber),
+            ])
+            ->values()
+            ->all();
+
+        $monthTransactions = $yearTransactions->filter(
+            fn ($transaction) => (int) $transaction->posting_date->format('n') === $month
+        );
+
+        $weeksInMonth = Carbon::create($year, $month, 1)->endOfMonth()->weekOfMonth ?: 1;
+        $weekDefinitions = collect(range(1, $weeksInMonth))
+            ->map(fn ($weekNumber) => [
+                'key' => $weekNumber,
+                'label' => 'שבוע ' . $weekNumber,
+            ])
+            ->values()
+            ->all();
+
+        $daysInMonth = Carbon::create($year, $month, 1)->daysInMonth;
+        $dayDefinitions = collect(range(1, $daysInMonth))
+            ->map(fn ($dayNumber) => [
+                'key' => $dayNumber,
+                'label' => str_pad((string) $dayNumber, 2, '0', STR_PAD_LEFT),
+            ])
+            ->values()
+            ->all();
+
+        $yearlySeries = $this->buildCategorySeries(
+            $transactions,
+            $categoryDescriptors,
+            $yearDefinitions,
+            fn ($transaction) => (int) $transaction->posting_date->format('Y')
+        );
+
+        $monthlySeries = $this->buildCategorySeries(
+            $yearTransactions,
+            $categoryDescriptors,
+            $monthDefinitions,
+            fn ($transaction) => (int) $transaction->posting_date->format('n')
+        );
+
+        $weeklySeries = $this->buildCategorySeries(
+            $monthTransactions,
+            $categoryDescriptors,
+            $weekDefinitions,
+            fn ($transaction) => $transaction->posting_date->weekOfMonth
+        );
+
+        $dailySeries = $this->buildCategorySeries(
+            $monthTransactions,
+            $categoryDescriptors,
+            $dayDefinitions,
+            fn ($transaction) => (int) $transaction->posting_date->format('j')
+        );
+
+        return [
+            'yearly' => $yearlySeries,
+            'monthly' => $monthlySeries,
+            'weekly' => $weeklySeries,
+            'daily' => $dailySeries,
+        ];
+    }
+
+    private function buildCategorySeries($transactions, $categoryDescriptors, array $definitions, callable $keyResolver): array
+    {
+        $summary = [];
+
+        foreach ($transactions as $transaction) {
+            $categoryId = $transaction->category_descriptor['id'];
+            $periodKey = $keyResolver($transaction);
+
+            if ($periodKey === null) {
+                continue;
+            }
+
+            if (!isset($summary[$categoryId])) {
+                $summary[$categoryId] = [];
+            }
+
+            if (!isset($summary[$categoryId][$periodKey])) {
+                $summary[$categoryId][$periodKey] = 0;
+            }
+
+            $summary[$categoryId][$periodKey] += $transaction->abs_amount;
+        }
+
+        $labels = array_map(fn ($definition) => $definition['label'], $definitions);
+
+        $datasets = $categoryDescriptors
+            ->map(function ($descriptor) use ($definitions, $summary) {
+                $data = array_map(function ($definition) use ($descriptor, $summary) {
+                    $key = $definition['key'];
+
+                    if (!isset($summary[$descriptor['id']][$key])) {
+                        return 0;
+                    }
+
+                    return round((float) $summary[$descriptor['id']][$key], 2);
+                }, $definitions);
+
+                return [
+                    'categoryId' => $descriptor['id'],
+                    'label' => $descriptor['name'],
+                    'color' => $descriptor['color'],
+                    'data' => $data,
+                ];
+            })
+            ->values()
+            ->all();
+
+        return [
+            'labels' => $labels,
+            'datasets' => $datasets,
+        ];
+    }
+
+    private function makeCategoryDescriptor($category = null): array
+    {
+        if ($category) {
+            return [
+                'id' => (string) $category->id,
+                'name' => $category->name ?? 'קטגוריה',
+                'color' => $category->color ?? '#6366F1',
+            ];
+        }
+
+        return [
+            'id' => 'uncategorized',
+            'name' => 'ללא קטגוריה',
+            'color' => '#9CA3AF',
+        ];
+    }
+
+    private function buildMonthlySeries($transactions, int $year): array
+    {
+        $collection = collect($transactions);
+
+        return collect(range(1, 12))
+            ->map(function ($monthNumber) use ($collection, $year) {
+                $items = $collection->filter(
+                    fn ($transaction) => (int) $transaction->posting_date->format('n') === $monthNumber
+                );
+
+                return [
+                    'key' => $monthNumber,
+                    'label' => $this->getMonthLabel($monthNumber),
+                    'income' => round((float) $items->where('type', 'income')->sum('amount'), 2),
+                    'expense' => round((float) $items->where('type', 'expense')->sum('amount'), 2),
+                    'year' => $year,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function buildWeeklySeries($transactions, int $year, int $month): array
+    {
+        $weeksInMonth = Carbon::create($year, $month, 1)->endOfMonth()->weekOfMonth;
+        $weeksRange = $weeksInMonth > 0 ? range(1, $weeksInMonth) : [1];
+        $collection = collect($transactions);
+
+        return collect($weeksRange)
+            ->map(function ($weekNumber) use ($collection) {
+                $items = $collection->filter(
+                    fn ($transaction) => $transaction->posting_date->weekOfMonth === $weekNumber
+                );
+
+                return [
+                    'key' => $weekNumber,
+                    'label' => 'שבוע ' . $weekNumber,
+                    'income' => round((float) $items->where('type', 'income')->sum('amount'), 2),
+                    'expense' => round((float) $items->where('type', 'expense')->sum('amount'), 2),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function buildDailySeries($transactions, int $year, int $month): array
+    {
+        $daysInMonth = Carbon::create($year, $month, 1)->daysInMonth;
+        $collection = collect($transactions);
+
+        return collect(range(1, $daysInMonth))
+            ->map(function ($dayNumber) use ($collection) {
+                $items = $collection->filter(
+                    fn ($transaction) => (int) $transaction->posting_date->format('j') === $dayNumber
+                );
+
+                return [
+                    'key' => $dayNumber,
+                    'label' => str_pad((string) $dayNumber, 2, '0', STR_PAD_LEFT),
+                    'income' => round((float) $items->where('type', 'income')->sum('amount'), 2),
+                    'expense' => round((float) $items->where('type', 'expense')->sum('amount'), 2),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function getMonthLabel(int $monthNumber): string
+    {
+        $months = [
+            1 => 'ינואר',
+            2 => 'פברואר',
+            3 => 'מרץ',
+            4 => 'אפריל',
+            5 => 'מאי',
+            6 => 'יוני',
+            7 => 'יולי',
+            8 => 'אוגוסט',
+            9 => 'ספטמבר',
+            10 => 'אוקטובר',
+            11 => 'נובמבר',
+            12 => 'דצמבר',
+        ];
+
+        return $months[$monthNumber] ?? (string) $monthNumber;
     }
 
     private function calculateAccountStatus($user, int $year, int $month): float

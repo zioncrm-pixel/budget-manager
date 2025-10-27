@@ -76,7 +76,79 @@ const formatCurrency = (amount) => {
     }).format(amount || 0)
 }
 
-const categoryTypeBadgeClass = (type) => (type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700')
+const totalIncomeAmount = computed(() => Number(props.totalIncome ?? 0))
+
+const totalPlannedBudget = computed(() => {
+    return (props.categoriesWithBudgets || []).reduce((sum, category) => {
+        const planned = category?.budget?.planned_amount
+        const parsed = planned !== undefined && planned !== null ? parseFloat(planned) : 0
+        return Number.isFinite(parsed) ? sum + parsed : sum
+    }, 0)
+})
+
+const remainingIncomeAfterBudget = computed(() => totalIncomeAmount.value - totalPlannedBudget.value)
+
+const budgetCoveragePercentage = computed(() => {
+    const income = totalIncomeAmount.value
+    if (income <= 0) {
+        return totalPlannedBudget.value > 0 ? 100 : 0
+    }
+    const ratio = (totalPlannedBudget.value / income) * 100
+    return Math.round(Math.min(Math.max(ratio, 0), 999))
+})
+
+const budgetCoveragePercentageDisplay = computed(() => budgetCoveragePercentage.value.toFixed(0))
+
+const totalBudgetProgressWidth = computed(() => `${Math.min(budgetCoveragePercentage.value, 100)}%`)
+
+const totalBudgetProgressBarClass = computed(() => {
+    if (budgetCoveragePercentage.value > 110) return 'bg-red-500'
+    if (budgetCoveragePercentage.value > 95) return 'bg-orange-400'
+    if (budgetCoveragePercentage.value > 75) return 'bg-yellow-400'
+    return 'bg-indigo-500'
+})
+
+const remainingIncomeClass = computed(() => {
+    if (remainingIncomeAfterBudget.value < 0) return 'text-red-600 font-semibold'
+    if (remainingIncomeAfterBudget.value === 0) return 'text-gray-600 font-semibold'
+    return 'text-green-600 font-semibold'
+})
+
+const categoryTypeBadgeClass = (type) => {
+    if (type === 'income') {
+        return 'bg-green-100 text-green-700'
+    }
+
+    if (type === 'both') {
+        return 'bg-blue-100 text-blue-700'
+    }
+
+    return 'bg-red-100 text-red-700'
+}
+
+const categoryTypeLabel = (type) => {
+    if (type === 'income') {
+        return 'הכנסה'
+    }
+
+    if (type === 'both') {
+        return 'הכנסה והוצאה'
+    }
+
+    return 'הוצאה'
+}
+
+const categoryBudgetPlaceholder = (type) => {
+    if (type === 'income') {
+        return 'קטגוריית הכנסה ללא תקציב'
+    }
+
+    if (type === 'both') {
+        return 'קטגוריה משולבת ללא תקציב'
+    }
+
+    return 'טרם נקבע תקציב לקטגוריה'
+}
 
 const budgetProgressBarClass = (percentage) => {
     if (percentage > 90) return 'bg-red-500'
@@ -88,6 +160,24 @@ const budgetProgressTextClass = (percentage) => {
     if (percentage > 90) return 'text-red-600'
     if (percentage > 75) return 'text-yellow-600'
     return 'text-green-600'
+}
+
+const budgetSpentClass = (budget) => {
+    if (!budget) {
+        return 'text-gray-600 font-semibold'
+    }
+
+    const spent = Number(budget.spent_amount ?? 0)
+
+    if (spent < 0) {
+        return 'text-green-600 font-semibold'
+    }
+
+    if (spent === 0) {
+        return 'text-gray-600 font-semibold'
+    }
+
+    return 'text-red-600 font-semibold'
 }
 
 const getContrastingTextColor = (hexColor) => {
@@ -341,6 +431,32 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                     </div>
 
                     <div class="p-6">
+                        <div class="mb-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm">
+                            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-indigo-900">סיכום תקציב חודשי</h3>
+                                    <p class="text-xs text-indigo-700">
+                                        סך התקציבים המתוכננים עבור {{ selectedMonthLabel }} {{ selectedYear }}.
+                                    </p>
+                                </div>
+                                <div class="text-sm font-semibold text-indigo-900">
+                                    {{ formatCurrency(totalPlannedBudget) }} ₪ מתוך {{ formatCurrency(totalIncomeAmount) }} ₪ הכנסות
+                                </div>
+                            </div>
+                            <div class="mt-4 h-3 w-full rounded-full bg-white/70">
+                                <div
+                                    class="h-3 rounded-full transition-all duration-500"
+                                    :class="totalBudgetProgressBarClass"
+                                    :style="{ width: totalBudgetProgressWidth }"
+                                ></div>
+                            </div>
+                            <div class="mt-2 flex flex-col gap-1 text-xs text-indigo-900 sm:flex-row sm:items-center sm:justify-between">
+                                <span>כיסוי תקציב: {{ budgetCoveragePercentageDisplay }}%</span>
+                                <span :class="remainingIncomeClass">
+                                    נותר להקצות: {{ formatCurrency(remainingIncomeAfterBudget) }} ₪
+                                </span>
+                            </div>
+                        </div>
                         <div v-if="hasCategories" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                             <div
                                 v-for="category in categoriesWithBudgets"
@@ -367,7 +483,7 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                                             <h4 class="text-lg font-semibold text-gray-900">{{ category.category_name }}</h4>
                                             <div class="mt-2 flex items-center justify-end gap-2 text-xs">
                                                 <span class="inline-flex items-center rounded-full px-2.5 py-1 font-medium" :class="categoryTypeBadgeClass(category.type)">
-                                                    {{ category.type === 'income' ? 'הכנסה' : 'הוצאה' }}
+                                                    {{ categoryTypeLabel(category.type) }}
                                                 </span>
                                                 <span
                                                     v-if="category.is_active === false"
@@ -422,8 +538,8 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                                         <span>{{ formatCurrency(category.budget.planned_amount) }} ₪ מתוכנן</span>
                                     </div>
                                     <div class="mt-2 flex items-center justify-between text-sm">
-                                        <span>הוצא</span>
-                                        <span class="font-semibold text-red-600">{{ formatCurrency(category.budget.spent_amount) }} ₪</span>
+                                        <span>הוצאה נטו</span>
+                                        <span :class="budgetSpentClass(category.budget)">{{ formatCurrency(category.budget.spent_amount) }} ₪</span>
                                     </div>
                                     <div class="mt-1 flex items-center justify-between text-sm">
                                         <span>נותר</span>
@@ -444,7 +560,7 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                                 </div>
 
                                 <div v-else class="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">
-                                    {{ category.type === 'income' ? 'קטגוריית הכנסה ללא תקציב' : 'טרם נקבע תקציב לקטגוריה' }}
+                                    {{ categoryBudgetPlaceholder(category.type) }}
                                 </div>
 
                                 <div class="mt-auto text-center">

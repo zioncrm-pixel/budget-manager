@@ -130,9 +130,40 @@ const assignCategorySelectionTypes = computed(() => {
     return Array.from(types)
 })
 
-const assignCategoryType = computed(() => (assignCategorySelectionTypes.value.length === 1
-    ? assignCategorySelectionTypes.value[0]
-    : null))
+const assignCategoryType = computed(() => {
+    const types = assignCategorySelectionTypes.value
+
+    if (types.length === 0) {
+        return null
+    }
+
+    if (types.length === 1) {
+        return types[0]
+    }
+
+    const unique = new Set(types)
+    if (unique.size === 2 && unique.has('income') && unique.has('expense')) {
+        return 'both'
+    }
+
+    return null
+})
+
+const isCategoryTypeCompatible = (selectionType, categoryType) => {
+    if (!selectionType || !categoryType) {
+        return true
+    }
+
+    if (selectionType === 'both') {
+        return categoryType === 'both'
+    }
+
+    if (categoryType === 'both') {
+        return true
+    }
+
+    return selectionType === categoryType
+}
 
 const assignableCategories = computed(() => {
     const type = assignCategoryType.value
@@ -141,8 +172,8 @@ const assignableCategories = computed(() => {
     }
 
     return (props.categoriesWithBudgets || []).filter((category) => {
-        const categoryType = category.type || category.category_type
-        return categoryType === type
+        const categoryType = (category.type || category.category_type || '').toString()
+        return isCategoryTypeCompatible(type, categoryType)
     })
 })
 
@@ -210,7 +241,7 @@ watch(
 
         closeCategoryCreateModal()
 
-        if (type && created.type && created.type !== type) {
+        if (type && created.type && !isCategoryTypeCompatible(type, created.type)) {
             assignCategoryError.value = 'הקטגוריה החדשה אינה תואמת לסוג התזרימים שנבחרו.'
             return
         }
@@ -682,7 +713,7 @@ const closeCategoryCreateModal = () => {
 const submitAssignCategory = async () => {
     if (!isAssignCategoryReady.value) {
         if (!assignCategoryType.value) {
-            assignCategoryError.value = 'בחר תזרימים מאותו סוג (הכנסה או הוצאה) כדי לשייך לקטגוריה.'
+            assignCategoryError.value = 'בחר תזרימים מאותו סוג, או קטגוריה משולבת המתאימה לתערובת של הכנסות והוצאות.'
         } else if (!assignableCategories.value.length) {
             assignCategoryError.value = 'לא קיימות קטגוריות מתאימות לשיוך.'
         } else if (!assignCategorySelectedId.value) {
@@ -1723,7 +1754,7 @@ watch(bulkMinDate, (min) => {
                     v-if="!assignCategoryType"
                     class="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700"
                 >
-                    ניתן לשייך קטגוריה רק לתזרימים מאותו סוג (הכנסה או הוצאה).
+                    ניתן לשייך קטגוריה רק לתזרימים מאותו סוג, או לקטגוריה משולבת (הכנסה והוצאה) כאשר יש תזרימים משני הסוגים.
                 </div>
 
                 <div

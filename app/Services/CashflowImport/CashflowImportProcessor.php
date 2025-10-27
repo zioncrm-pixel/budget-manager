@@ -111,7 +111,7 @@ class CashflowImportProcessor
             $category = $rowCategoryId ? $categories->get($rowCategoryId) : null;
             $source = $rowSourceId ? $sources->get($rowSourceId) : null;
 
-            if ($category && $category->type !== $type) {
+            if ($category && $category->type !== 'both' && $category->type !== $type) {
                 $errors[] = $this->buildRowError($rowIndex, 'category_id', 'הקטגוריה שנבחרה אינה תואמת לסוג התזרים.', $values);
                 continue;
             }

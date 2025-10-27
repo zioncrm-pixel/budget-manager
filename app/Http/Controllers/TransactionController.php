@@ -105,7 +105,7 @@ class TransactionController extends Controller
                                ->firstOrFail();
 
             // בדיקה שהקטגוריה תואמת לסוג התזרים
-            if ($category->type !== $request->type) {
+            if ($category->type !== 'both' && $category->type !== $request->type) {
                 return back()->withErrors([
                     'category_id' => 'הקטגוריה שנבחרה אינה תואמת לסוג התזרים'
                 ]);
@@ -223,7 +223,7 @@ class TransactionController extends Controller
                 ->where('user_id', $user->id)
                 ->firstOrFail();
 
-            if ($category->type !== $request->type) {
+            if ($category->type !== 'both' && $category->type !== $request->type) {
                 return back()->withErrors([
                     'category_id' => 'הקטגוריה שנבחרה אינה תואמת לסוג התזרים'
                 ]);

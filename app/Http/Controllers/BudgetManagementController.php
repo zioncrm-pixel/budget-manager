@@ -21,7 +21,7 @@ class BudgetManagementController extends Controller
         $data = $request->validate([
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'name' => ['required', 'string', 'max:255'],
-            'type' => ['required', 'in:income,expense'],
+            'type' => ['required', 'in:income,expense,both'],
             'color' => ['required', 'string', 'max:7'],
             'icon' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
@@ -100,7 +100,7 @@ class BudgetManagementController extends Controller
         $data = $request->validate([
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'name' => ['required', 'string', 'max:255'],
-            'type' => ['required', 'in:income,expense'],
+            'type' => ['required', 'in:income,expense,both'],
             'color' => ['required', 'string', 'max:7'],
             'icon' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
@@ -223,17 +223,24 @@ class BudgetManagementController extends Controller
         $user = Auth::user();
         $year = (int) $request->get('year', now()->year);
         $month = (int) $request->get('month', now()->month);
-        $type = $request->get('type', $category->type);
+        $requestedType = $request->get('type');
+        $type = $requestedType ?? $category->type;
         $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
+        $allowedTypes = ['income', 'expense'];
 
         $query = $user->transactions()
             ->with(['cashFlowSource', 'category'])
-            ->where('type', $type)
             ->whereYear($periodColumn, $year)
             ->whereMonth($periodColumn, $month)
             ->where(function ($q) use ($category) {
                 $q->whereNull('category_id')->orWhere('category_id', '!=', $category->id);
             });
+
+        if (in_array($type, $allowedTypes, true)) {
+            $query->where('type', $type);
+        } else {
+            $query->whereIn('type', $allowedTypes);
+        }
 
         if ($request->get('exclude_ids')) {
             $ids = collect(explode(',', $request->get('exclude_ids')))
@@ -291,7 +298,7 @@ class BudgetManagementController extends Controller
         $assigned = [];
 
         foreach ($transactions as $transaction) {
-            if ($transaction->type !== $category->type) {
+            if ($category->type !== 'both' && $transaction->type !== $category->type) {
                 continue;
             }
 
