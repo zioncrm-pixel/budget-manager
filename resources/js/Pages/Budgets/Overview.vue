@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import PeriodSelector from '@/Components/PeriodSelector.vue'
@@ -19,6 +19,7 @@ const props = defineProps({
     cashFlowSources: Array,
     allCategories: Array,
     budgetsForMonth: Array,
+    transactionsForAssignment: Array,
 })
 
 const defaultYear = Number(props.currentYear) || new Date().getFullYear()
@@ -49,6 +50,55 @@ const monthOptions = [
 ]
 
 const yearOptions = [2020, 2021, 2022, 2023, 2024, 2025, 2026]
+
+const tabOptions = [
+    { key: 'overview', label: 'סקירת תקציבים' },
+    { key: 'assignment', label: 'שיוך לקטגוריות' },
+]
+
+const availableTabs = tabOptions.map(tab => tab.key)
+
+const readTabFromLocation = () => {
+    if (typeof window === 'undefined') {
+        return 'overview'
+    }
+
+    try {
+        const params = new URLSearchParams(window.location.search)
+        const tab = params.get('tab')
+        if (tab && availableTabs.includes(tab)) {
+            return tab
+        }
+    } catch (error) {
+        // ignore malformed URLs and fall back to overview
+    }
+
+    return 'overview'
+}
+
+const activeTab = ref(readTabFromLocation())
+
+const tabButtonClass = (tabKey) => {
+    const base = 'w-full text-center px-4 py-2 text-sm font-medium transition focus:outline-none sm:flex-1 sm:w-auto'
+    if (activeTab.value === tabKey) {
+        return `${base} border-b-2 border-indigo-500 text-indigo-600 bg-white`
+    }
+
+    return `${base} border-b-2 border-transparent text-gray-600 hover:text-indigo-600 hover:bg-gray-50`
+}
+
+const syncTabFromLocation = () => {
+    const nextTab = readTabFromLocation()
+    if (nextTab !== activeTab.value) {
+        activeTab.value = nextTab
+    }
+}
+
+const handlePopState = () => {
+    syncTabFromLocation()
+}
+
+const isOverviewTab = computed(() => activeTab.value === 'overview')
 
 const selectedMonthLabel = computed(() => {
     const current = monthOptions.find(option => String(option.value) === String(selectedMonth.value))
@@ -202,6 +252,352 @@ const getContrastingTextColor = (hexColor) => {
     return luminance > 0.6 ? '#111827' : '#FFFFFF'
 }
 
+const normalizeAssignmentTransaction = (transaction) => {
+    const primaryDate = transaction?.primary_date
+        || transaction?.posting_date
+        || transaction?.transaction_date
+        || ''
+
+    return {
+        ...transaction,
+        displayDate: primaryDate,
+        categoryName: transaction?.category?.name || 'ללא קטגוריה',
+        categoryType: transaction?.category?.type || null,
+        cashFlowSourceName: transaction?.cash_flow_source?.name || null,
+        directionClass: transaction?.type === 'income' ? 'text-green-600' : 'text-red-600',
+    }
+}
+
+const assignmentTransactions = ref(
+    (props.transactionsForAssignment || []).map(normalizeAssignmentTransaction)
+)
+
+const selectedAssignmentTransactionIds = ref([])
+
+watch(
+    () => props.transactionsForAssignment,
+    (value) => {
+        assignmentTransactions.value = (value || []).map(normalizeAssignmentTransaction)
+    }
+)
+
+watch(assignmentTransactions, () => {
+    const availableIds = new Set(
+        assignmentTransactions.value
+            .map(transaction => Number(transaction.id))
+            .filter(Number.isFinite)
+    )
+    selectedAssignmentTransactionIds.value = selectedAssignmentTransactionIds.value.filter(
+        (id) => availableIds.has(id)
+    )
+})
+
+watch(selectedAssignmentTransactionIds, () => {
+    assignmentFeedback.value = null
+})
+
+const assignmentTransactionsMap = computed(() => {
+    const map = new Map()
+    assignmentTransactions.value.forEach((transaction) => {
+        if (transaction?.id !== undefined && transaction?.id !== null) {
+            map.set(Number(transaction.id), transaction)
+        }
+    })
+    return map
+})
+
+const assignmentSearchTerm = ref('')
+const showOnlyUnassigned = ref(false)
+const assignmentFeedback = ref(null)
+const isAssignmentSubmitting = ref(false)
+
+const hasAssignmentSelection = computed(() => selectedAssignmentTransactionIds.value.length > 0)
+const selectedAssignmentCount = computed(() => selectedAssignmentTransactionIds.value.length)
+
+const isTransactionSelected = (id) => {
+    const normalizedId = Number(id)
+    if (!Number.isFinite(normalizedId)) {
+        return false
+    }
+
+    return selectedAssignmentTransactionIds.value.includes(normalizedId)
+}
+
+const toggleTransactionSelection = (id) => {
+    const normalizedId = Number(id)
+
+    if (!Number.isFinite(normalizedId)) {
+        return
+    }
+
+    if (isTransactionSelected(normalizedId)) {
+        selectedAssignmentTransactionIds.value = selectedAssignmentTransactionIds.value.filter(
+            (existingId) => existingId !== normalizedId
+        )
+    } else {
+        selectedAssignmentTransactionIds.value = [
+            ...selectedAssignmentTransactionIds.value,
+            normalizedId,
+        ]
+    }
+}
+
+const clearTransactionSelection = () => {
+    selectedAssignmentTransactionIds.value = []
+}
+
+const handleTransactionRowClick = (id) => {
+    if (isAssignmentSubmitting.value) {
+        return
+    }
+
+    toggleTransactionSelection(id)
+}
+
+const visibleAssignmentTransactions = computed(() => {
+    const search = assignmentSearchTerm.value.trim().toLowerCase()
+
+    return assignmentTransactions.value.filter((transaction) => {
+        if (showOnlyUnassigned.value && transaction.category_id) {
+            return false
+        }
+
+        if (!search) {
+            return true
+        }
+
+        const haystack = [
+            transaction.description,
+            transaction.notes,
+            transaction.categoryName,
+            transaction.cashFlowSourceName,
+            transaction.formatted_amount,
+            transaction.displayDate,
+        ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+
+        return haystack.includes(search)
+    })
+})
+
+const visibleAssignmentIds = computed(() => visibleAssignmentTransactions.value
+    .map(transaction => Number(transaction.id))
+    .filter(Number.isFinite)
+)
+
+const isAllVisibleSelected = computed(() => {
+    if (!visibleAssignmentIds.value.length) {
+        return false
+    }
+
+    return visibleAssignmentIds.value.every((id) => isTransactionSelected(id))
+})
+
+const toggleSelectAllVisible = () => {
+    if (!visibleAssignmentIds.value.length) {
+        return
+    }
+
+    if (isAllVisibleSelected.value) {
+        const toRemove = new Set(visibleAssignmentIds.value)
+        selectedAssignmentTransactionIds.value = selectedAssignmentTransactionIds.value.filter(
+            (id) => !toRemove.has(id)
+        )
+        return
+    }
+
+    const merged = new Set([
+        ...selectedAssignmentTransactionIds.value,
+        ...visibleAssignmentIds.value,
+    ])
+    selectedAssignmentTransactionIds.value = Array.from(merged)
+}
+
+const selectedAssignmentTypes = computed(() => {
+    const types = new Set()
+    selectedAssignmentTransactionIds.value.forEach((id) => {
+        const transaction = assignmentTransactionsMap.value.get(Number(id))
+        if (transaction?.type) {
+            types.add(transaction.type)
+        }
+    })
+    return Array.from(types)
+})
+
+const assignmentSelectionType = computed(() => {
+    const types = selectedAssignmentTypes.value
+
+    if (!types.length) {
+        return null
+    }
+
+    if (types.length === 1) {
+        return types[0]
+    }
+
+    const unique = new Set(types)
+    if (unique.size === 2 && unique.has('income') && unique.has('expense')) {
+        return 'both'
+    }
+
+    return null
+})
+
+const assignmentSelectionTypeLabel = computed(() => {
+    const type = assignmentSelectionType.value
+    return type ? categoryTypeLabel(type) : 'ללא'
+})
+
+const isCategoryTypeCompatible = (selectionType, categoryType) => {
+    if (!selectionType || !categoryType) {
+        return true
+    }
+
+    if (selectionType === 'both') {
+        return categoryType === 'both'
+    }
+
+    if (categoryType === 'both') {
+        return true
+    }
+
+    return selectionType === categoryType
+}
+
+const assignmentCategorySearchTerm = ref('')
+
+const assignmentCategories = computed(() => {
+    return (props.categoriesWithBudgets || []).map((category) => {
+        const id = category.category_id ?? category.id
+
+        return {
+            id,
+            name: category.category_name ?? category.name ?? 'ללא שם',
+            type: category.type,
+            color: category.category_color ?? category.color,
+            icon: category.category_icon ?? category.icon,
+            description: category.description,
+            isActive: category.is_active !== false,
+            budget: category.budget ?? null,
+        }
+    })
+})
+
+const filteredAssignmentCategories = computed(() => {
+    const search = assignmentCategorySearchTerm.value.trim().toLowerCase()
+    if (!search) {
+        return assignmentCategories.value
+    }
+
+    return assignmentCategories.value.filter((category) => {
+        const haystack = [
+            category.name,
+            category.description,
+            categoryTypeLabel(category.type),
+        ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+
+        return haystack.includes(search)
+    })
+})
+
+const isCategorySelectable = (category) => {
+    if (!category || !hasAssignmentSelection.value) {
+        return false
+    }
+
+    return isCategoryTypeCompatible(assignmentSelectionType.value, category.type)
+}
+
+const assignmentSelectionSummary = computed(() => {
+    if (!hasAssignmentSelection.value) {
+        return 'אין תזרימים שנבחרו'
+    }
+
+    return `${selectedAssignmentCount.value} תזרימים • סוג: ${assignmentSelectionTypeLabel.value}`
+})
+
+const assignTransactionsToCategory = async (category) => {
+    if (!category || isAssignmentSubmitting.value) {
+        return
+    }
+
+    if (!hasAssignmentSelection.value) {
+        assignmentFeedback.value = 'בחר תחילה לפחות תזרים אחד לשיוך.'
+        return
+    }
+
+    if (!isCategorySelectable(category)) {
+        assignmentFeedback.value = 'סוג הקטגוריה אינו תואם לבחירת התזרימים הנוכחית.'
+        return
+    }
+
+    const categoryId = Number(category.id)
+    if (!categoryId) {
+        assignmentFeedback.value = 'התרחשה שגיאה בזיהוי הקטגוריה.'
+        return
+    }
+
+    isAssignmentSubmitting.value = true
+    assignmentFeedback.value = null
+
+    const httpClient = typeof window !== 'undefined' ? window.axios : null
+
+    if (!httpClient) {
+        isAssignmentSubmitting.value = false
+        assignmentFeedback.value = 'לא ניתן לבצע שיוך כעת. רכיב הרשת לא זמין.'
+        return
+    }
+
+    try {
+        const response = await httpClient.post(
+            route('budgets.manage.transactions.assign', categoryId),
+            {
+                transaction_ids: selectedAssignmentTransactionIds.value,
+            }
+        )
+
+        const assignedIds = Array.isArray(response?.data?.assigned)
+            ? response.data.assigned
+            : []
+
+        if (!assignedIds.length) {
+            assignmentFeedback.value = 'לא בוצע שיוך. ודא שסוג הקטגוריה תואם לתזרימים שנבחרו.'
+            isAssignmentSubmitting.value = false
+            return
+        }
+
+        assignmentFeedback.value = `שיוך ${assignedIds.length} תזרימים לקטגוריה "${category.name}" הושלם בהצלחה.`
+        selectedAssignmentTransactionIds.value = []
+
+        router.reload({
+            only: [
+                'categoriesWithBudgets',
+                'budgetsForMonth',
+                'transactionsForAssignment',
+                'totalIncome',
+                'totalExpenses',
+                'balance',
+            ],
+            preserveScroll: true,
+            onFinish: () => {
+                isAssignmentSubmitting.value = false
+            },
+            onError: () => {
+                isAssignmentSubmitting.value = false
+                assignmentFeedback.value = 'התרחשה שגיאה בעת רענון הנתונים אחרי השיוך.'
+            },
+        })
+    } catch (error) {
+        isAssignmentSubmitting.value = false
+        assignmentFeedback.value = 'אירעה שגיאה בעת ביצוע השיוך. נסה שוב.'
+    }
+}
+
 const persistPeriod = (year, month) => {
     if (typeof window === 'undefined') return
     savePeriod(year, month)
@@ -209,10 +605,32 @@ const persistPeriod = (year, month) => {
 
 const navigateToPeriod = (year, month, options = {}) => {
     persistPeriod(year, month)
-    router.visit(`/budgets/overview?year=${year}&month=${month}`, {
+    router.visit(route('budgets.overview', {
+        year,
+        month,
+        tab: activeTab.value,
+    }), {
         preserveScroll: true,
         replace: true,
         ...options,
+    })
+}
+
+const changeTab = (tabKey) => {
+    if (!tabKey || !availableTabs.includes(tabKey) || tabKey === activeTab.value) {
+        return
+    }
+
+    activeTab.value = tabKey
+
+    router.visit(route('budgets.overview', {
+        year: selectedYear.value,
+        month: selectedMonth.value,
+        tab: tabKey,
+    }), {
+        preserveScroll: true,
+        replace: true,
+        preserveState: true,
     })
 }
 
@@ -272,7 +690,19 @@ const handleToday = () => {
 }
 
 onMounted(() => {
+    syncTabFromLocation()
+    if (typeof window !== 'undefined') {
+        window.addEventListener('popstate', handlePopState)
+    }
     tryApplyStoredPeriod()
+})
+
+onBeforeUnmount(() => {
+    if (typeof window === 'undefined') {
+        return
+    }
+
+    window.removeEventListener('popstate', handlePopState)
 })
 
 const openNewCategoryModal = () => {
@@ -430,7 +860,21 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                         </button>
                     </div>
 
-                    <div class="p-6">
+                    <div class="border-b border-gray-200 bg-gray-50/70">
+                        <nav class="flex flex-col sm:flex-row">
+                            <button
+                                v-for="tab in tabOptions"
+                                :key="tab.key"
+                                type="button"
+                                :class="tabButtonClass(tab.key)"
+                                @click="changeTab(tab.key)"
+                            >
+                                {{ tab.label }}
+                            </button>
+                        </nav>
+                    </div>
+
+                    <div class="p-6" v-if="isOverviewTab">
                         <div class="mb-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm">
                             <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
@@ -573,6 +1017,322 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
 
                         <div v-else class="py-12 text-center text-gray-500">
                             אין קטגוריות להצגה עבור התקופה שנבחרה
+                        </div>
+                    </div>
+
+                    <div class="p-6" v-else>
+                        <div class="flex flex-col gap-6">
+                            <div class="flex flex-col-reverse gap-3 text-right sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-lg font-semibold text-gray-900">שיוך עסקאות לקטגוריות</h3>
+                                    <p class="text-sm text-gray-500">
+                                        בחר תזרימים מהרשימה, ולאחר מכן לחץ על הקטגוריה המתאימה כדי להשלים את השיוך.
+                                    </p>
+                                </div>
+                                <div class="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+                                    <span class="text-sm text-gray-600">
+                                        {{ assignmentSelectionSummary }}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        class="inline-flex items-center rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                                        :disabled="!hasAssignmentSelection || isAssignmentSubmitting"
+                                        @click="clearTransactionSelection"
+                                    >
+                                        נקה בחירה
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div
+                                v-if="assignmentFeedback"
+                                class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+                            >
+                                {{ assignmentFeedback }}
+                            </div>
+
+                            <div
+                                v-if="isAssignmentSubmitting"
+                                class="rounded-md border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700"
+                            >
+                                מבצע שיוך... אנא המתן לסיום העדכון.
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-stretch">
+                                <div class="lg:col-span-1">
+                                    <div class="flex h-full min-h-0 flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                                        <div class="flex flex-col gap-3">
+                                            <div class="flex items-center gap-2 text-sm text-gray-600">
+                                                <input
+                                                    id="show-unassigned"
+                                                    type="checkbox"
+                                                    class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                    v-model="showOnlyUnassigned"
+                                                >
+                                                <label for="show-unassigned" class="cursor-pointer select-none">
+                                                    הצג רק עסקאות ללא קטגוריה
+                                                </label>
+                                            </div>
+                                            
+                                        </div>
+
+                                        <div class="flex items-center justify-between text-xs text-gray-500">
+                                            <span>סה"כ תזרימים בחודש: {{ assignmentTransactions.length }}</span>
+                                            <!-- <button
+                                                type="button"
+                                                class="text-indigo-600 transition hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                                @click="toggleSelectAllVisible"
+                                                :disabled="!visibleAssignmentIds.length || isAssignmentSubmitting"
+                                            >
+                                                {{ isAllVisibleSelected ? 'בטל בחירה בכל הנראים' : 'בחר את כל הנראים' }}
+                                            </button> -->
+                                        </div>
+                                        <div class="relative w-full">
+                                                <input
+                                                    type="search"
+                                                    v-model="assignmentSearchTerm"
+                                                    placeholder="חיפוש בתיאור, מקור או קטגוריה..."
+                                                    class="w-full rounded-md border border-gray-300 px-3 py-2 pr-9 text-sm text-right shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                >
+                                                <svg
+                                                    class="pointer-events-none absolute inset-y-0 left-2 h-5 w-5 text-gray-400"
+                                                    xmlns="http://www.w3.org/2000/svg"
+                                                    fill="none"
+                                                    viewBox="0 0 24 24"
+                                                    stroke-width="1.5"
+                                                    stroke="currentColor"
+                                                >
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0a7.5 7.5 0 1 0-10.607-10.607 7.5 7.5 0 0 0 10.607 10.607Z" />
+                                                </svg>
+                                            </div>
+
+                                        <div class="flex-1 overflow-hidden rounded-md border border-gray-200">
+                                            <div class="h-full max-h-[520px] overflow-x-auto overflow-y-auto">
+                                                <table class="min-w-full divide-y divide-gray-200 text-right">
+                                                <thead class="bg-gray-50">
+                                                    <tr>
+                                                        <th scope="col" class="w-12 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                            <input
+                                                                type="checkbox"
+                                                                class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                :checked="isAllVisibleSelected"
+                                                                :disabled="!visibleAssignmentIds.length || isAssignmentSubmitting"
+                                                                @change="toggleSelectAllVisible"
+                                                            >
+                                                        </th>
+                                                        <th scope="col" class="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">תיאור</th>
+                                                        <th scope="col" class="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">תאריך</th>
+                                                        <th scope="col" class="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">סכום</th>
+                                                        <th scope="col" class="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">קטגוריה נוכחית</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-gray-100 bg-white">
+                                                    <template v-if="visibleAssignmentTransactions.length">
+                                                        <tr
+                                                            v-for="transaction in visibleAssignmentTransactions"
+                                                            :key="transaction.id"
+                                                            class="transition hover:bg-gray-50"
+                                                            :class="{
+                                                                'bg-indigo-50/50': isTransactionSelected(transaction.id),
+                                                                'cursor-pointer': !isAssignmentSubmitting,
+                                                                'cursor-not-allowed': isAssignmentSubmitting,
+                                                            }"
+                                                            @click="handleTransactionRowClick(transaction.id)"
+                                                        >
+                                                            <td class="px-3 py-3 text-center">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    :checked="isTransactionSelected(transaction.id)"
+                                                                    :disabled="isAssignmentSubmitting"
+                                                                    @change.stop="toggleTransactionSelection(transaction.id)"
+                                                                    @click.stop
+                                                                >
+                                                            </td>
+                                                            <td class="px-3 py-3 align-top">
+                                                                <div class="flex flex-col gap-1 text-right">
+                                                                    <span class="text-sm font-medium text-gray-900">
+                                                                        {{ transaction.description || 'ללא תיאור' }}
+                                                                    </span>
+                                                                    <span class="inline-flex w-fit items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">
+                                                                        {{ categoryTypeLabel(transaction.type) }}
+                                                                    </span>
+                                                                    <span
+                                                                        v-if="transaction.cashFlowSourceName"
+                                                                        class="text-xs text-gray-500"
+                                                                    >
+                                                                        מקור: {{ transaction.cashFlowSourceName }}
+                                                                    </span>
+                                                                    <span
+                                                                        v-if="transaction.notes"
+                                                                        class="text-xs text-gray-400"
+                                                                    >
+                                                                        הערות: {{ transaction.notes }}
+                                                                    </span>
+                                                                    <span
+                                                                        v-if="transaction.status"
+                                                                        class="text-[11px] text-gray-400"
+                                                                    >
+                                                                        סטטוס: {{ transaction.status }}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                            <td class="px-3 py-3 align-top text-sm text-gray-600">
+                                                                {{ transaction.displayDate || '—' }}
+                                                            </td>
+                                                            <td class="px-3 py-3 align-top text-sm font-semibold" :class="transaction.directionClass">
+                                                                {{ transaction.formatted_amount }} ₪
+                                                            </td>
+                                                            <td class="px-3 py-3 align-top">
+                                                                <div class="flex flex-col items-end">
+                                                                    <template v-if="transaction.category">
+                                                                        <span class="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
+                                                                            <span aria-hidden="true">{{ transaction.category.icon || '🏷️' }}</span>
+                                                                            <span>{{ transaction.categoryName }}</span>
+                                                                        </span>
+                                                                        <span class="text-[11px] text-gray-500">
+                                                                            סוג: {{ categoryTypeLabel(transaction.categoryType) }}
+                                                                        </span>
+                                                                    </template>
+                                                                    <span v-else class="text-xs font-medium text-gray-400">
+                                                                        ללא קטגוריה
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    </template>
+                                                    <tr v-else>
+                                                        <td colspan="5" class="px-3 py-12 text-center text-sm text-gray-500">
+                                                            אין תזרימים מתאימים להצגה.
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="lg:col-span-1">
+                                    <div class="flex h-full flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                                        <div class="flex flex-col gap-1 text-right">
+                                            <h4 class="text-base font-semibold text-gray-900">קטגוריות זמינות</h4>
+                                            <p class="text-xs text-gray-500">
+                                                לחיצה על קטגוריה תשייך אליה את כל התזרימים שנבחרו.
+                                            </p>
+                                            <span class="text-xs text-gray-500">
+                                                קטגוריות פעילות: {{ assignmentCategories.length }}
+                                            </span>
+                                        </div>
+
+                                        <div class="relative">
+                                            <input
+                                                type="search"
+                                                v-model="assignmentCategorySearchTerm"
+                                                placeholder="חיפוש לפי שם קטגוריה או תיאור..."
+                                                class="w-full rounded-md border border-gray-300 px-3 py-2 pr-9 text-sm text-right shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                            >
+                                            <svg
+                                                class="pointer-events-none absolute inset-y-0 left-2 h-5 w-5 text-gray-400"
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                fill="none"
+                                                viewBox="0 0 24 24"
+                                                stroke-width="1.5"
+                                                stroke="currentColor"
+                                            >
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0a7.5 7.5 0 1 0-10.607-10.607 7.5 7.5 0 0 0 10.607 10.607Z" />
+                                            </svg>
+                                        </div>
+
+                                        <div class="max-h-[520px] space-y-3 overflow-y-auto pr-1">
+                                            <template v-if="assignmentCategories.length">
+                                                <template v-if="filteredAssignmentCategories.length">
+                                                <button
+                                                    v-for="category in filteredAssignmentCategories"
+                                                    :key="category.id"
+                                                    type="button"
+                                                    class="w-full rounded-lg border border-gray-200 bg-white p-3 text-right transition hover:border-indigo-300 hover:bg-indigo-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                                                    :class="{
+                                                        'border-indigo-300 bg-indigo-50/70': isCategorySelectable(category) && hasAssignmentSelection && !isAssignmentSubmitting,
+                                                    }"
+                                                    :disabled="isAssignmentSubmitting || (hasAssignmentSelection && !isCategorySelectable(category))"
+                                                    @click="assignTransactionsToCategory(category)"
+                                                >
+                                                    <div class="flex items-start justify-between gap-3">
+                                                        <div class="flex items-center gap-3">
+                                                            <span
+                                                                class="inline-flex h-10 w-10 items-center justify-center rounded-md text-2xl shadow-sm ring-1 ring-black/5"
+                                                                :style="{
+                                                                    backgroundColor: category.color || '#E5E7EB',
+                                                                    color: getContrastingTextColor(category.color || '#E5E7EB'),
+                                                                }"
+                                                                aria-hidden="true"
+                                                            >
+                                                                {{ category.icon || '📁' }}
+                                                            </span>
+                                                            <div class="text-right">
+                                                                <p class="text-sm font-semibold text-gray-900">
+                                                                    {{ category.name }}
+                                                                </p>
+                                                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">
+                                                                    {{ categoryTypeLabel(category.type) }}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        <svg
+                                                            v-if="hasAssignmentSelection && isCategorySelectable(category)"
+                                                            class="h-5 w-5 text-indigo-500"
+                                                            xmlns="http://www.w3.org/2000/svg"
+                                                            fill="none"
+                                                            viewBox="0 0 24 24"
+                                                            stroke-width="1.5"
+                                                            stroke="currentColor"
+                                                        >
+                                                            <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                                                        </svg>
+                                                    </div>
+
+                                                    <p v-if="category.description" class="mt-2 text-xs text-gray-500">
+                                                        {{ category.description }}
+                                                    </p>
+
+                                                    <div v-if="category.budget" class="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs">
+                                                        <div class="flex items-center justify-between text-gray-600">
+                                                            <span>מתוכנן</span>
+                                                            <span>{{ formatCurrency(category.budget.planned_amount) }} ₪</span>
+                                                        </div>
+                                                        <div class="mt-1 flex items-center justify-between">
+                                                            <span>הוצאה</span>
+                                                            <span :class="budgetSpentClass(category.budget)">
+                                                                {{ formatCurrency(category.budget.spent_amount) }} ₪
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    <div v-else class="mt-3 rounded-md border border-dashed border-gray-300 bg-white px-3 py-2 text-xs text-gray-500">
+                                                        ללא תקציב לחודש שנבחר
+                                                    </div>
+                                                </button>
+                                                </template>
+                                                <div v-else class="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-12 text-center text-sm text-gray-500">
+                                                    אין קטגוריות שמתאימות לחיפוש שבחרת.
+                                                </div>
+                                            </template>
+                                            <div v-else class="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-12 text-center text-sm text-gray-500">
+                                                אין קטגוריות פעילות. ניתן להוסיף קטגוריה חדשה בעזרת הכפתור למעלה.
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            class="mt-auto inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                                            @click="openNewCategoryModal"
+                                        >
+                                            הוסף קטגוריה חדשה
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

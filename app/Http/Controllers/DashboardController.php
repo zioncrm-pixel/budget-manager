@@ -85,6 +85,7 @@ class DashboardController extends Controller
         $budgets = $user->getOrCreateBudgetsForMonth($year, $month);
         $cashFlowSources = $this->getCashFlowSources($user);
         $allCategories = $user->categories()->orderBy('name')->get();
+        $transactionsForAssignment = $this->getTransactionsForAssignment($user, $year, $month);
 
         return Inertia::render('Budgets/Overview', [
             'user' => $user,
@@ -117,6 +118,7 @@ class DashboardController extends Controller
                     'remaining_amount' => $budget->remaining_amount,
                 ];
             }),
+            'transactionsForAssignment' => $transactionsForAssignment,
         ]);
     }
 
@@ -712,6 +714,52 @@ class DashboardController extends Controller
             ->whereMonth('posting_date', $month)
             ->orderByDesc('updated_at')
             ->get();
+    }
+
+    private function getTransactionsForAssignment($user, int $year, int $month)
+    {
+        $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
+
+        return $user->transactions()
+            ->with(['category', 'cashFlowSource'])
+            ->whereYear($periodColumn, $year)
+            ->whereMonth($periodColumn, $month)
+            ->orderByDesc($periodColumn)
+            ->get()
+            ->map(function ($transaction) {
+                $primaryDate = $transaction->posting_date ?? $transaction->transaction_date;
+
+                return [
+                    'id' => $transaction->id,
+                    'amount' => (float) $transaction->amount,
+                    'type' => $transaction->type,
+                    'description' => $transaction->description,
+                    'notes' => $transaction->notes,
+                    'status' => $transaction->status,
+                    'posting_date' => optional($transaction->posting_date)->toDateString(),
+                    'transaction_date' => optional($transaction->transaction_date)->toDateString(),
+                    'primary_date' => optional($primaryDate)->toDateString(),
+                    'category_id' => $transaction->category_id,
+                    'category' => $transaction->category ? [
+                        'id' => $transaction->category->id,
+                        'name' => $transaction->category->name,
+                        'type' => $transaction->category->type,
+                        'color' => $transaction->category->color,
+                        'icon' => $transaction->category->icon,
+                        'is_active' => $transaction->category->is_active,
+                    ] : null,
+                    'cash_flow_source' => $transaction->cashFlowSource ? [
+                        'id' => $transaction->cashFlowSource->id,
+                        'name' => $transaction->cashFlowSource->name,
+                        'type' => $transaction->cashFlowSource->type,
+                        'color' => $transaction->cashFlowSource->color,
+                        'icon' => $transaction->cashFlowSource->icon,
+                    ] : null,
+                    'formatted_amount' => $transaction->type === 'income'
+                        ? '+' . number_format((float) $transaction->amount, 2)
+                        : '-' . number_format((float) $transaction->amount, 2),
+                ];
+            });
     }
 
     private function getCategoriesWithBudgets($user, int $year, int $month)
