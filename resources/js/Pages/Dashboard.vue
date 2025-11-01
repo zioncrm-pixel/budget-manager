@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { Head, router, Link } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import TransactionAddModal from '@/Components/TransactionAddModal.vue'
-import PeriodSelector from '@/Components/PeriodSelector.vue'
+import PeriodHeader from '@/Components/PeriodHeader.vue'
 import IncomeExpenseChart from '@/Components/IncomeExpenseChart.vue'
 import CategoryExpenseChart from '@/Components/CategoryExpenseChart.vue'
 import { loadPeriod, savePeriod } from '@/utils/periodStorage'
@@ -21,6 +21,14 @@ const props = defineProps({
     monthlyTransactions: Array,
     incomeExpenseChart: Object,
     categoryExpenseChart: Object,
+    availableYears: {
+        type: Array,
+        default: () => [],
+    },
+    availablePeriods: {
+        type: Array,
+        default: () => [],
+    },
 })
 
 const defaultYear = Number(props.currentYear) || new Date().getFullYear()
@@ -30,7 +38,7 @@ const selectedYear = ref(defaultYear)
 const selectedMonth = ref(defaultMonth)
 const isTransactionModalOpen = ref(false)
 
-const monthOptions = [
+const allMonthOptions = [
     { value: 1, label: 'ינואר' },
     { value: 2, label: 'פברואר' },
     { value: 3, label: 'מרץ' },
@@ -45,35 +53,128 @@ const monthOptions = [
     { value: 12, label: 'דצמבר' },
 ]
 
-const yearOptions = [2020, 2021, 2022, 2023, 2024, 2025, 2026]
+const availablePeriodsByYear = computed(() => {
+    const map = new Map()
+
+    if (Array.isArray(props.availablePeriods)) {
+        props.availablePeriods.forEach((period) => {
+            const year = Number(period?.year)
+            if (!Number.isFinite(year)) {
+                return
+            }
+
+            const months = Array.isArray(period?.months)
+                ? period.months
+                    .map(month => Number(month))
+                    .filter(month => Number.isFinite(month) && month >= 1 && month <= 12)
+                : []
+
+            const uniqueMonths = Array.from(new Set(months)).sort((a, b) => b - a)
+            map.set(year, uniqueMonths)
+        })
+    }
+
+    if (!map.size) {
+        map.set(defaultYear, [defaultMonth])
+    }
+
+    if (Array.isArray(props.availableYears)) {
+        props.availableYears.forEach((year) => {
+            const numericYear = Number(year)
+            if (Number.isFinite(numericYear) && !map.has(numericYear)) {
+                map.set(numericYear, [])
+            }
+        })
+    }
+
+    return map
+})
+
+const yearOptions = computed(() => {
+    const years = Array.from(availablePeriodsByYear.value.keys())
+    if (!years.includes(defaultYear)) {
+        years.push(defaultYear)
+    }
+
+    const uniqueYears = Array.from(new Set(
+        years.filter(year => Number.isFinite(year))
+    ))
+
+    return uniqueYears.sort((a, b) => b - a)
+})
+
+const availableMonthsForYear = (year) => {
+    const months = availablePeriodsByYear.value.get(Number(year))
+    if (!Array.isArray(months) || !months.length) {
+        return null
+    }
+
+    return months
+}
+
+const monthOptions = computed(() => {
+    const months = availableMonthsForYear(selectedYear.value)
+    if (!months) {
+        return allMonthOptions
+    }
+
+    const allowed = new Set(months)
+    const filtered = allMonthOptions.filter(option => allowed.has(Number(option.value)))
+
+    return filtered.length ? filtered : allMonthOptions
+})
+
+const normalizeMonthForYear = (year, month) => {
+    const months = availableMonthsForYear(year)
+    if (!months || !months.length) {
+        return Number(month)
+    }
+
+    const numericMonth = Number(month)
+    if (months.includes(numericMonth)) {
+        return numericMonth
+    }
+
+    return months[0]
+}
 
 const selectedMonthLabel = computed(() => {
-    const current = monthOptions.find(option => String(option.value) === String(selectedMonth.value))
+    const current = allMonthOptions.find(option => Number(option.value) === Number(selectedMonth.value))
     return current?.label || selectedMonth.value
 })
+
+const periodDisplay = computed(() => `${selectedYear.value} - ${selectedMonthLabel.value}`)
 
 watch(
     () => props.currentYear,
     (value) => {
-        selectedYear.value = Number(value) || new Date().getFullYear()
+        const year = Number(value) || new Date().getFullYear()
+        selectedYear.value = year
+        const normalized = normalizeMonthForYear(year, selectedMonth.value)
+        if (normalized !== selectedMonth.value) {
+            selectedMonth.value = normalized
+        }
     }
 )
 
 watch(
     () => props.currentMonth,
     (value) => {
-        selectedMonth.value = Number(value) || new Date().getMonth() + 1
+        const month = Number(value) || new Date().getMonth() + 1
+        selectedMonth.value = normalizeMonthForYear(selectedYear.value, month)
     }
 )
 
 const persistPeriod = (year, month) => {
     if (typeof window === 'undefined') return
-    savePeriod(year, month)
+    savePeriod(Number(year), Number(month))
 }
 
 const navigateToPeriod = (year, month, options = {}) => {
-    persistPeriod(year, month)
-    router.visit(`/dashboard?year=${year}&month=${month}`, {
+    const normalizedYear = Number(year)
+    const normalizedMonth = normalizeMonthForYear(normalizedYear, month)
+    persistPeriod(normalizedYear, normalizedMonth)
+    router.visit(`/dashboard?year=${normalizedYear}&month=${normalizedMonth}`, {
         preserveScroll: true,
         replace: true,
         ...options,
@@ -92,38 +193,50 @@ const tryApplyStoredPeriod = () => {
     const hasValidQuery = Number.isInteger(queryYear) && Number.isInteger(queryMonth)
 
     if (hasValidQuery) {
-        persistPeriod(queryYear, queryMonth)
+        const normalizedMonth = normalizeMonthForYear(queryYear, queryMonth)
+        selectedYear.value = queryYear
+        selectedMonth.value = normalizedMonth
+        persistPeriod(queryYear, normalizedMonth)
         return
     }
 
     if (!stored) {
-        persistPeriod(selectedYear.value, selectedMonth.value)
+        const normalizedMonth = normalizeMonthForYear(selectedYear.value, selectedMonth.value)
+        selectedMonth.value = normalizedMonth
+        persistPeriod(selectedYear.value, normalizedMonth)
         return
     }
 
     if (stored.year !== selectedYear.value || stored.month !== selectedMonth.value) {
         selectedYear.value = stored.year
-        selectedMonth.value = stored.month
-        navigateToPeriod(stored.year, stored.month)
+        selectedMonth.value = normalizeMonthForYear(stored.year, stored.month)
+        navigateToPeriod(selectedYear.value, selectedMonth.value)
     } else {
-        persistPeriod(stored.year, stored.month)
+        const normalizedMonth = normalizeMonthForYear(stored.year, stored.month)
+        selectedMonth.value = normalizedMonth
+        persistPeriod(stored.year, normalizedMonth)
     }
 }
 
 const handleYearUpdate = (value) => {
-    selectedYear.value = value
+    const year = Number(value)
+    const normalizedMonth = normalizeMonthForYear(year, selectedMonth.value)
+    selectedYear.value = year
+    if (normalizedMonth !== selectedMonth.value) {
+        selectedMonth.value = normalizedMonth
+    }
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
 
 const handleMonthUpdate = (value) => {
-    selectedMonth.value = value
+    selectedMonth.value = normalizeMonthForYear(selectedYear.value, value)
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
 
 const handleToday = () => {
     const now = new Date()
     const year = now.getFullYear()
-    const month = now.getMonth() + 1
+    const month = normalizeMonthForYear(year, now.getMonth() + 1)
 
     if (year === selectedYear.value && month === selectedMonth.value) {
         navigateToPeriod(year, month)
@@ -594,30 +707,24 @@ watch(horizontalSourceOptions, (options) => {
 
     <AuthenticatedLayout>
         <template #header>
-            <div class="flex flex-col gap-4 text-right">
-                <div class="flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <h2 class="text-xl font-semibold leading-tight text-gray-800">
+            <PeriodHeader
+                :selected-year="selectedYear"
+                :selected-month="selectedMonth"
+                :period-display="periodDisplay"
+                :year-options="yearOptions"
+                :month-options="monthOptions"
+                summary-order="start"
+                summary-wrapper-class="w-full lg:flex-none lg:w-auto"
+                @update:year="handleYearUpdate"
+                @update:month="handleMonthUpdate"
+                @today="handleToday"
+            >
+                <template #summary>
+                    <h2 class="text-xl font-semibold leading-tight text-gray-800 text-right lg:text-left">
                         דשבורד תקציב ביתי
                     </h2>
-                    <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
-                        <span>
-                            בחירת תקופה:
-                            <span class="font-semibold text-gray-900">
-                                {{ selectedYear }} - {{ selectedMonthLabel }}
-                            </span>
-                        </span>
-                        <PeriodSelector
-                            :selected-year="selectedYear"
-                            :selected-month="selectedMonth"
-                            :year-options="yearOptions"
-                            :month-options="monthOptions"
-                            @update:year="handleYearUpdate"
-                            @update:month="handleMonthUpdate"
-                            @today="handleToday"
-                        />
-                    </div>
-                </div>
-            </div>
+                </template>
+            </PeriodHeader>
         </template>
 
         <div class="py-6">

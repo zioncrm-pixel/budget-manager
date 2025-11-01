@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 use Carbon\Carbon;
+use Exception;
 use Illuminate\Support\Facades\DB;
 use App\Models\CashFlowSourceBudget;
 
@@ -19,6 +20,8 @@ class DashboardController extends Controller
         $user = Auth::user();
 
         [$year, $month] = $this->resolvePeriod($request);
+        $availablePeriods = $this->getAvailablePeriods($user, (int) $year, (int) $month);
+        $availableYears = collect($availablePeriods)->pluck('year')->unique()->values()->all();
 
         $totals = $this->calculateTotals($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
@@ -41,6 +44,8 @@ class DashboardController extends Controller
             'monthlyTransactions' => $transactions,
             'incomeExpenseChart' => $incomeExpenseChart,
             'categoryExpenseChart' => $categoryExpenseChart,
+            'availableYears' => $availableYears,
+            'availablePeriods' => $availablePeriods,
         ]);
     }
 
@@ -49,6 +54,8 @@ class DashboardController extends Controller
         $user = Auth::user();
 
         [$year, $month] = $this->resolvePeriod($request);
+        $availablePeriods = $this->getAvailablePeriods($user, (int) $year, (int) $month);
+        $availableYears = collect($availablePeriods)->pluck('year')->unique()->values()->all();
 
         $totals = $this->calculateTotals($user, $year, $month);
         $accountStatementRows = $this->buildAccountStatementRows($user, $year, $month);
@@ -69,6 +76,8 @@ class DashboardController extends Controller
             'allTransactions' => $transactions,
             'categoriesWithBudgets' => $categoriesWithBudgets,
             'cashFlowSources' => $cashFlowSources,
+            'availableYears' => $availableYears,
+            'availablePeriods' => $availablePeriods,
         ]);
     }
 
@@ -77,6 +86,8 @@ class DashboardController extends Controller
         $user = Auth::user();
 
         [$year, $month] = $this->resolvePeriod($request);
+        $availablePeriods = $this->getAvailablePeriods($user, (int) $year, (int) $month);
+        $availableYears = collect($availablePeriods)->pluck('year')->unique()->values()->all();
 
         $totals = $this->calculateTotals($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
@@ -119,6 +130,8 @@ class DashboardController extends Controller
                 ];
             }),
             'transactionsForAssignment' => $transactionsForAssignment,
+            'availableYears' => $availableYears,
+            'availablePeriods' => $availablePeriods,
         ]);
     }
 
@@ -127,6 +140,8 @@ class DashboardController extends Controller
         $user = Auth::user();
 
         [$year, $month] = $this->resolvePeriod($request);
+        $availablePeriods = $this->getAvailablePeriods($user, (int) $year, (int) $month);
+        $availableYears = collect($availablePeriods)->pluck('year')->unique()->values()->all();
 
         $totals = $this->calculateTotals($user, $year, $month);
 
@@ -188,6 +203,8 @@ class DashboardController extends Controller
             'allCashFlowSources' => $allCashFlowSources,
             'allCategories' => $allCategories,
             'budgetsForMonth' => $budgetsForMonth,
+            'availableYears' => $availableYears,
+            'availablePeriods' => $availablePeriods,
         ]);
     }
 
@@ -197,6 +214,100 @@ class DashboardController extends Controller
         $month = (int) $request->get('month', Carbon::now()->month);
 
         return [$year, $month];
+    }
+
+    private function getAvailablePeriods($user, int $currentYear, int $currentMonth): array
+    {
+        $transactionPeriods = $user->transactions()
+            ->where(function ($query) {
+                $query->whereNotNull('posting_date')
+                    ->orWhereNotNull('transaction_date');
+            })
+            ->get(['posting_date', 'transaction_date'])
+            ->map(function ($transaction) {
+                $date = $transaction->posting_date ?? $transaction->transaction_date;
+                if (!$date) {
+                    return null;
+                }
+
+                try {
+                    $date = Carbon::parse($date);
+                } catch (Exception $e) {
+                    return null;
+                }
+
+                return [
+                    'year' => (int) $date->year,
+                    'month' => (int) $date->month,
+                ];
+            })
+            ->filter();
+
+        $categoryBudgetPeriods = $user->budgets()
+            ->select(['year', 'month'])
+            ->get()
+            ->map(function ($budget) {
+                return [
+                    'year' => isset($budget->year) ? (int) $budget->year : null,
+                    'month' => isset($budget->month) ? (int) $budget->month : null,
+                ];
+            })
+            ->filter();
+
+        $sourceBudgetPeriods = CashFlowSourceBudget::query()
+            ->select(['year', 'month'])
+            ->where('user_id', $user->id)
+            ->get()
+            ->map(function ($budget) {
+                return [
+                    'year' => isset($budget->year) ? (int) $budget->year : null,
+                    'month' => isset($budget->month) ? (int) $budget->month : null,
+                ];
+            })
+            ->filter();
+
+        $periods = $transactionPeriods
+            ->merge($categoryBudgetPeriods)
+            ->merge($sourceBudgetPeriods)
+            ->filter(function ($period) {
+                return $period['year'] !== null
+                    && $period['month'] !== null
+                    && $period['month'] >= 1
+                    && $period['month'] <= 12;
+            });
+
+        $periods->push([
+            'year' => $currentYear,
+            'month' => $currentMonth,
+        ]);
+
+        if ($periods->isEmpty()) {
+            $now = Carbon::now();
+            $periods->push([
+                'year' => (int) $now->year,
+                'month' => (int) $now->month,
+            ]);
+        }
+
+        return $periods
+            ->groupBy('year')
+            ->map(function ($items, $year) {
+                $months = $items->pluck('month')
+                    ->filter(fn ($month) => $month >= 1 && $month <= 12)
+                    ->unique()
+                    ->sortDesc()
+                    ->values()
+                    ->all();
+
+                return [
+                    'year' => (int) $year,
+                    'months' => $months,
+                ];
+            })
+            ->values()
+            ->sortByDesc('year')
+            ->values()
+            ->all();
     }
 
     private function calculateTotals($user, int $year, int $month): array

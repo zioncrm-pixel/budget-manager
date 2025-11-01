@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import PeriodSelector from '@/Components/PeriodSelector.vue'
+import PeriodHeader from '@/Components/PeriodHeader.vue'
 import BudgetManagerModal from '@/Components/BudgetManagerModal.vue'
 import CategoryTransactionsModal from '@/Components/CategoryTransactionsModal.vue'
 import { loadPeriod, savePeriod } from '@/utils/periodStorage'
@@ -20,6 +20,14 @@ const props = defineProps({
     allCategories: Array,
     budgetsForMonth: Array,
     transactionsForAssignment: Array,
+    availableYears: {
+        type: Array,
+        default: () => [],
+    },
+    availablePeriods: {
+        type: Array,
+        default: () => [],
+    },
 })
 
 const defaultYear = Number(props.currentYear) || new Date().getFullYear()
@@ -34,7 +42,7 @@ const isTransactionsModalOpen = ref(false)
 const transactionsCategory = ref(null)
 const duplicatingCategoryId = ref(null)
 
-const monthOptions = [
+const allMonthOptions = [
     { value: 1, label: 'ינואר' },
     { value: 2, label: 'פברואר' },
     { value: 3, label: 'מרץ' },
@@ -49,7 +57,90 @@ const monthOptions = [
     { value: 12, label: 'דצמבר' },
 ]
 
-const yearOptions = [2020, 2021, 2022, 2023, 2024, 2025, 2026]
+const availablePeriodsByYear = computed(() => {
+    const map = new Map()
+
+    if (Array.isArray(props.availablePeriods)) {
+        props.availablePeriods.forEach((period) => {
+            const year = Number(period?.year)
+            if (!Number.isFinite(year)) {
+                return
+            }
+
+            const months = Array.isArray(period?.months)
+                ? period.months
+                    .map(month => Number(month))
+                    .filter(month => Number.isFinite(month) && month >= 1 && month <= 12)
+                : []
+
+            const uniqueMonths = Array.from(new Set(months)).sort((a, b) => b - a)
+            map.set(year, uniqueMonths)
+        })
+    }
+
+    if (!map.size) {
+        map.set(defaultYear, [defaultMonth])
+    }
+
+    if (Array.isArray(props.availableYears)) {
+        props.availableYears.forEach((year) => {
+            const numericYear = Number(year)
+            if (Number.isFinite(numericYear) && !map.has(numericYear)) {
+                map.set(numericYear, [])
+            }
+        })
+    }
+
+    return map
+})
+
+const yearOptions = computed(() => {
+    const years = Array.from(availablePeriodsByYear.value.keys())
+    if (!years.includes(defaultYear)) {
+        years.push(defaultYear)
+    }
+
+    const uniqueYears = Array.from(new Set(
+        years.filter(year => Number.isFinite(year))
+    ))
+
+    return uniqueYears.sort((a, b) => b - a)
+})
+
+const availableMonthsForYear = (year) => {
+    const months = availablePeriodsByYear.value.get(Number(year))
+    if (!Array.isArray(months) || !months.length) {
+        return null
+    }
+
+    return months
+}
+
+const monthOptions = computed(() => {
+    const months = availableMonthsForYear(selectedYear.value)
+    if (!months) {
+        return allMonthOptions
+    }
+
+    const allowed = new Set(months)
+    const filtered = allMonthOptions.filter(option => allowed.has(Number(option.value)))
+
+    return filtered.length ? filtered : allMonthOptions
+})
+
+const normalizeMonthForYear = (year, month) => {
+    const months = availableMonthsForYear(year)
+    if (!months || !months.length) {
+        return Number(month)
+    }
+
+    const numericMonth = Number(month)
+    if (months.includes(numericMonth)) {
+        return numericMonth
+    }
+
+    return months[0]
+}
 
 const tabOptions = [
     { key: 'overview', label: 'סקירת תקציבים' },
@@ -101,21 +192,29 @@ const handlePopState = () => {
 const isOverviewTab = computed(() => activeTab.value === 'overview')
 
 const selectedMonthLabel = computed(() => {
-    const current = monthOptions.find(option => String(option.value) === String(selectedMonth.value))
+    const current = allMonthOptions.find(option => Number(option.value) === Number(selectedMonth.value))
     return current?.label || selectedMonth.value
 })
+
+const periodDisplay = computed(() => `${selectedYear.value} - ${selectedMonthLabel.value}`)
 
 watch(
     () => props.currentYear,
     (value) => {
-        selectedYear.value = Number(value) || new Date().getFullYear()
+        const year = Number(value) || new Date().getFullYear()
+        selectedYear.value = year
+        const normalized = normalizeMonthForYear(year, selectedMonth.value)
+        if (normalized !== selectedMonth.value) {
+            selectedMonth.value = normalized
+        }
     }
 )
 
 watch(
     () => props.currentMonth,
     (value) => {
-        selectedMonth.value = Number(value) || new Date().getMonth() + 1
+        const month = Number(value) || new Date().getMonth() + 1
+        selectedMonth.value = normalizeMonthForYear(selectedYear.value, month)
     }
 )
 
@@ -125,6 +224,35 @@ const formatCurrency = (amount) => {
         maximumFractionDigits: 2,
     }).format(amount || 0)
 }
+
+const formatCurrencyWithSymbol = (amount) => `${formatCurrency(amount)} ₪`
+
+const headerMetrics = computed(() => [
+    {
+        key: 'accountStatus',
+        label: 'מצב העו"ש',
+        value: formatCurrencyWithSymbol(props.accountStatus),
+        valueClass: 'text-gray-900',
+    },
+    {
+        key: 'balance',
+        label: 'יתרה',
+        value: formatCurrencyWithSymbol(props.balance),
+        valueClass: 'text-gray-900',
+    },
+    {
+        key: 'income',
+        label: 'סה\"כ הכנסות',
+        value: formatCurrencyWithSymbol(props.totalIncome),
+        valueClass: 'text-green-600',
+    },
+    {
+        key: 'expenses',
+        label: 'סה\"כ הוצאות',
+        value: formatCurrencyWithSymbol(props.totalExpenses),
+        valueClass: 'text-red-600',
+    },
+])
 
 const totalIncomeAmount = computed(() => Number(props.totalIncome ?? 0))
 
@@ -600,14 +728,16 @@ const assignTransactionsToCategory = async (category) => {
 
 const persistPeriod = (year, month) => {
     if (typeof window === 'undefined') return
-    savePeriod(year, month)
+    savePeriod(Number(year), Number(month))
 }
 
 const navigateToPeriod = (year, month, options = {}) => {
-    persistPeriod(year, month)
+    const normalizedYear = Number(year)
+    const normalizedMonth = normalizeMonthForYear(normalizedYear, month)
+    persistPeriod(normalizedYear, normalizedMonth)
     router.visit(route('budgets.overview', {
-        year,
-        month,
+        year: normalizedYear,
+        month: normalizedMonth,
         tab: activeTab.value,
     }), {
         preserveScroll: true,
@@ -623,9 +753,14 @@ const changeTab = (tabKey) => {
 
     activeTab.value = tabKey
 
+    const normalizedMonth = normalizeMonthForYear(selectedYear.value, selectedMonth.value)
+    if (normalizedMonth !== selectedMonth.value) {
+        selectedMonth.value = normalizedMonth
+    }
+
     router.visit(route('budgets.overview', {
         year: selectedYear.value,
-        month: selectedMonth.value,
+        month: normalizedMonth,
         tab: tabKey,
     }), {
         preserveScroll: true,
@@ -646,38 +781,50 @@ const tryApplyStoredPeriod = () => {
     const hasValidQuery = Number.isInteger(queryYear) && Number.isInteger(queryMonth)
 
     if (hasValidQuery) {
-        persistPeriod(queryYear, queryMonth)
+        const normalizedMonth = normalizeMonthForYear(queryYear, queryMonth)
+        selectedYear.value = queryYear
+        selectedMonth.value = normalizedMonth
+        persistPeriod(queryYear, normalizedMonth)
         return
     }
 
     if (!stored) {
-        persistPeriod(selectedYear.value, selectedMonth.value)
+        const normalizedMonth = normalizeMonthForYear(selectedYear.value, selectedMonth.value)
+        selectedMonth.value = normalizedMonth
+        persistPeriod(selectedYear.value, normalizedMonth)
         return
     }
 
     if (stored.year !== selectedYear.value || stored.month !== selectedMonth.value) {
         selectedYear.value = stored.year
-        selectedMonth.value = stored.month
-        navigateToPeriod(stored.year, stored.month)
+        selectedMonth.value = normalizeMonthForYear(stored.year, stored.month)
+        navigateToPeriod(selectedYear.value, selectedMonth.value)
     } else {
-        persistPeriod(stored.year, stored.month)
+        const normalizedMonth = normalizeMonthForYear(stored.year, stored.month)
+        selectedMonth.value = normalizedMonth
+        persistPeriod(stored.year, normalizedMonth)
     }
 }
 
 const handleYearUpdate = (value) => {
-    selectedYear.value = value
+    const year = Number(value)
+    const normalizedMonth = normalizeMonthForYear(year, selectedMonth.value)
+    selectedYear.value = year
+    if (normalizedMonth !== selectedMonth.value) {
+        selectedMonth.value = normalizedMonth
+    }
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
 
 const handleMonthUpdate = (value) => {
-    selectedMonth.value = value
+    selectedMonth.value = normalizeMonthForYear(selectedYear.value, value)
     navigateToPeriod(selectedYear.value, selectedMonth.value)
 }
 
 const handleToday = () => {
     const now = new Date()
     const year = now.getFullYear()
-    const month = now.getMonth() + 1
+    const month = normalizeMonthForYear(year, now.getMonth() + 1)
 
     if (year === selectedYear.value && month === selectedMonth.value) {
         navigateToPeriod(year, month)
@@ -797,69 +944,53 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
     <Head title="קטגוריות ותקציבים" />
 
     <AuthenticatedLayout>
-  <template #header>
-            <div class="flex flex-col gap-4 text-right">
-                <div class="flex w-full flex-row items-start gap-6 text-right">
-                    <div class="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
-                            <p class="text-xs text-gray-500">מצב העו"ש</p>
-                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.accountStatus) }} ₪</p>
+        <template #header>
+            <PeriodHeader
+                :metrics="headerMetrics"
+                :selected-year="selectedYear"
+                :selected-month="selectedMonth"
+                :period-display="periodDisplay"
+                :year-options="yearOptions"
+                :month-options="monthOptions"
+                summary-order="start"
+                summary-wrapper-class="w-full lg:flex-1 lg:min-w-[280px]"
+                @update:year="handleYearUpdate"
+                @update:month="handleMonthUpdate"
+                @today="handleToday"
+            >
+                <template #summary>
+                    <div class="h-full rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm">
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-end lg:text-left">
+                            <div>
+                                <p class="text-xs text-indigo-700">
+                                    סך התקציבים המתוכננים עבור {{ selectedMonthLabel }} {{ selectedYear }}.
+                                </p>
+                            </div>
+                            <div class="text-sm font-semibold text-indigo-900">
+                                {{ formatCurrency(totalPlannedBudget) }} ₪ מתוך {{ formatCurrency(totalIncomeAmount) }} ₪ הכנסות
+                            </div>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
-                            <p class="text-xs text-gray-500">יתרה</p>
-                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(props.balance) }} ₪</p>
+                        <div class="mt-3 h-2.5 w-full rounded-full bg-white/70">
+                            <div
+                                class="h-2.5 rounded-full transition-all duration-500"
+                                :class="totalBudgetProgressBarClass"
+                                :style="{ width: totalBudgetProgressWidth }"
+                            ></div>
                         </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
-                            <p class="text-xs text-gray-500">סה"כ הכנסות</p>
-                            <p class="text-lg font-semibold text-green-600">{{ formatCurrency(props.totalIncome) }} ₪</p>
-                        </div>
-                        <div class="rounded-md border border-gray-200 bg-white px-3 py-2.5 text-right">
-                            <p class="text-xs text-gray-500">סה"כ הוצאות</p>
-                            <p class="text-lg font-semibold text-red-600">{{ formatCurrency(props.totalExpenses) }} ₪</p>
-                        </div>
-                    </div>
-                    <div class="ml-auto flex flex-col items-end gap-3 sm:flex-row sm:items-center sm:gap-6">
-                        <div class="flex flex-col items-end gap-1 text-sm text-gray-500">
-                            <span>
-                                בחירת תקופה:
-                                <span class="font-semibold text-gray-900">
-                                    {{ selectedYear }} - {{ selectedMonthLabel }}
-                                </span>
+                        <div class="mt-2 flex flex-col gap-1 text-xs text-indigo-900 sm:flex-row sm:items-center sm:justify-between">
+                            <span>כיסוי תקציב: {{ budgetCoveragePercentageDisplay }}%</span>
+                            <span :class="remainingIncomeClass">
+                                נותר להקצות: {{ formatCurrency(remainingIncomeAfterBudget) }} ₪
                             </span>
-                            <PeriodSelector
-                                :selected-year="selectedYear"
-                                :selected-month="selectedMonth"
-                                :year-options="yearOptions"
-                                :month-options="monthOptions"
-                                @update:year="handleYearUpdate"
-                                @update:month="handleMonthUpdate"
-                                @today="handleToday"
-                            />
                         </div>
                     </div>
-                </div>
-            </div>
+                </template>
+            </PeriodHeader>
         </template>
 
         <div class="py-6">
             <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
                 <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-                    <div class="flex flex-col gap-2 border-b border-gray-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                            <h3 class="text-lg font-medium text-gray-900 text-right">תקציבי קטגוריות</h3>
-                            <p class="text-sm text-gray-500">נהל תקציבים לחודש הנבחר, ערוך, מחק וצפה בעסקאות.</p>
-                        </div>
-                        <button
-                            @click="openNewCategoryModal"
-                            class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                        >
-                            <svg class="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                            </svg>
-                            הוסף קטגוריה
-                        </button>
-                    </div>
-
                     <div class="border-b border-gray-200 bg-gray-50/70">
                         <nav class="flex flex-col sm:flex-row">
                             <button
@@ -875,32 +1006,7 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                     </div>
 
                     <div class="p-6" v-if="isOverviewTab">
-                        <div class="mb-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm">
-                            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <h3 class="text-sm font-semibold text-indigo-900">סיכום תקציב חודשי</h3>
-                                    <p class="text-xs text-indigo-700">
-                                        סך התקציבים המתוכננים עבור {{ selectedMonthLabel }} {{ selectedYear }}.
-                                    </p>
-                                </div>
-                                <div class="text-sm font-semibold text-indigo-900">
-                                    {{ formatCurrency(totalPlannedBudget) }} ₪ מתוך {{ formatCurrency(totalIncomeAmount) }} ₪ הכנסות
-                                </div>
-                            </div>
-                            <div class="mt-4 h-3 w-full rounded-full bg-white/70">
-                                <div
-                                    class="h-3 rounded-full transition-all duration-500"
-                                    :class="totalBudgetProgressBarClass"
-                                    :style="{ width: totalBudgetProgressWidth }"
-                                ></div>
-                            </div>
-                            <div class="mt-2 flex flex-col gap-1 text-xs text-indigo-900 sm:flex-row sm:items-center sm:justify-between">
-                                <span>כיסוי תקציב: {{ budgetCoveragePercentageDisplay }}%</span>
-                                <span :class="remainingIncomeClass">
-                                    נותר להקצות: {{ formatCurrency(remainingIncomeAfterBudget) }} ₪
-                                </span>
-                            </div>
-                        </div>
+                        
                         <div v-if="hasCategories" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                             <div
                                 v-for="category in categoriesWithBudgets"
