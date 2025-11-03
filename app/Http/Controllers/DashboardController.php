@@ -81,6 +81,38 @@ class DashboardController extends Controller
         ]);
     }
 
+    public function cashflowStatement(Request $request)
+    {
+        $user = Auth::user();
+
+        [$year, $month] = $this->resolvePeriod($request);
+        $availablePeriods = $this->getAvailablePeriods($user, (int) $year, (int) $month);
+        $availableYears = collect($availablePeriods)->pluck('year')->unique()->values()->all();
+
+        $totals = $this->calculateTotals($user, $year, $month);
+        $accountStatementRows = $this->buildAccountStatementRows($user, $year, $month);
+        $transactions = $this->getTransactionsForPeriod($user, $year, $month);
+        $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
+        $cashFlowSources = $this->getCashFlowSources($user);
+        $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
+
+        return Inertia::render('Cashflow/Statement', [
+            'user' => $user,
+            'currentYear' => (int) $year,
+            'currentMonth' => (int) $month,
+            'totalIncome' => $totals['income'],
+            'totalExpenses' => $totals['expenses'],
+            'balance' => $totals['balance'],
+            'accountStatus' => $accountStatus,
+            'accountStatementRows' => $accountStatementRows,
+            'allTransactions' => $transactions,
+            'categoriesWithBudgets' => $categoriesWithBudgets,
+            'cashFlowSources' => $cashFlowSources,
+            'availableYears' => $availableYears,
+            'availablePeriods' => $availablePeriods,
+        ]);
+    }
+
     public function budgets(Request $request)
     {
         $user = Auth::user();

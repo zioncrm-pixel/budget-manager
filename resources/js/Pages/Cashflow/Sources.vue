@@ -268,18 +268,6 @@ const formatCurrencyWithSymbol = (amount) => `${formatCurrency(amount)} ₪`
 
 const headerMetrics = computed(() => [
     {
-        key: 'accountStatus',
-        label: 'מצב העו"ש',
-        value: formatCurrencyWithSymbol(props.accountStatus),
-        valueClass: 'text-gray-900',
-    },
-    {
-        key: 'balance',
-        label: 'יתרה',
-        value: formatCurrencyWithSymbol(props.balance),
-        valueClass: 'text-gray-900',
-    },
-    {
         key: 'income',
         label: 'סה\"כ הכנסות',
         value: formatCurrencyWithSymbol(props.totalIncome),
@@ -290,6 +278,18 @@ const headerMetrics = computed(() => [
         label: 'סה\"כ הוצאות',
         value: formatCurrencyWithSymbol(props.totalExpenses),
         valueClass: 'text-red-600',
+    },
+    {
+        key: 'balance',
+        label: 'יתרה',
+        value: formatCurrencyWithSymbol(props.balance),
+        valueClass: 'text-gray-900',
+    },
+    {
+        key: 'accountStatus',
+        label: 'מצב העו"ש',
+        value: formatCurrencyWithSymbol(props.accountStatus),
+        valueClass: 'text-gray-900',
     },
 ])
 

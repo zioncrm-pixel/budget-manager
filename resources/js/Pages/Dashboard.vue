@@ -714,15 +714,17 @@ watch(horizontalSourceOptions, (options) => {
                 :year-options="yearOptions"
                 :month-options="monthOptions"
                 summary-order="start"
-                summary-wrapper-class="w-full lg:flex-none lg:w-auto"
+                budget-summary-placement="start"
                 @update:year="handleYearUpdate"
                 @update:month="handleMonthUpdate"
                 @today="handleToday"
             >
                 <template #summary>
-                    <h2 class="text-xl font-semibold leading-tight text-gray-800 text-right lg:text-left">
-                        דשבורד תקציב ביתי
-                    </h2>
+                    <div class="flex w-full justify-center text-center lg:flex-1 lg:items-center lg:justify-center">
+                        <h2 class="text-xl font-semibold leading-tight text-gray-800">
+                            דשבורד תקציב ביתי
+                        </h2>
+                    </div>
                 </template>
             </PeriodHeader>
         </template>

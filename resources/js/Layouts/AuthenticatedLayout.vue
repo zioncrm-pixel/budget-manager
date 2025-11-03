@@ -22,6 +22,11 @@ const navigationItems = [
         iconPath: 'M9 12h6m-6 4h6m-7 4h8a2 2 0 002-2V6a2 2 0 00-2-2h-3l-2-2H9L7 4H4a2 2 0 00-2 2v12a2 2 0 002 2h3',
     },
     {
+        name: 'שורות עו"ש',
+        routeName: 'cashflow.statement',
+        iconPath: 'M4 6h16M4 10h16M4 14h16M4 18h16',
+    },
+    {
         name: 'קטגוריות ותקציבים',
         routeName: 'budgets.overview',
         iconPath: 'M9 17v-6a2 2 0 012-2h2a2 2 0 012 2v6m4 0V9a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.414-1.414a1 1 0 00-.707-.293H9a2 2 0 00-2 2v9m12 0H5',
@@ -211,7 +216,7 @@ const linkWithPeriod = (name, params = {}) => {
 
                 <div
                     v-if="$slots.header"
-                    class="sticky top-16 z-20 border-b border-gray-200 bg-white sm:top-0"
+                    class="sticky top-16 z-20 hidden border-b border-gray-200 bg-white sm:top-0 sm:block"
                 >
                     <div class="px-4 py-6 sm:px-6 lg:px-8">
                         <slot name="header" />
@@ -253,6 +258,13 @@ const linkWithPeriod = (name, params = {}) => {
                     </button>
                 </div>
                 <div class="flex-1 overflow-y-auto px-4 py-6">
+                    <div
+                        v-if="$slots.header"
+                        class="mb-6 rounded-lg border border-gray-200 bg-white/95 p-4 shadow-sm backdrop-blur"
+                    >
+                        <slot name="header" />
+                    </div>
+
                     <div class="space-y-3">
                         <ResponsiveNavLink
                             v-for="item in navigationItems"

@@ -229,18 +229,6 @@ const formatCurrencyWithSymbol = (amount) => `${formatCurrency(amount)} ₪`
 
 const headerMetrics = computed(() => [
     {
-        key: 'accountStatus',
-        label: 'מצב העו"ש',
-        value: formatCurrencyWithSymbol(props.accountStatus),
-        valueClass: 'text-gray-900',
-    },
-    {
-        key: 'balance',
-        label: 'יתרה',
-        value: formatCurrencyWithSymbol(props.balance),
-        valueClass: 'text-gray-900',
-    },
-    {
         key: 'income',
         label: 'סה\"כ הכנסות',
         value: formatCurrencyWithSymbol(props.totalIncome),
@@ -252,45 +240,19 @@ const headerMetrics = computed(() => [
         value: formatCurrencyWithSymbol(props.totalExpenses),
         valueClass: 'text-red-600',
     },
+    {
+        key: 'balance',
+        label: 'יתרה',
+        value: formatCurrencyWithSymbol(props.balance),
+        valueClass: 'text-gray-900',
+    },
+    {
+        key: 'accountStatus',
+        label: 'מצב העו"ש',
+        value: formatCurrencyWithSymbol(props.accountStatus),
+        valueClass: 'text-gray-900',
+    },
 ])
-
-const totalIncomeAmount = computed(() => Number(props.totalIncome ?? 0))
-
-const totalPlannedBudget = computed(() => {
-    return (props.categoriesWithBudgets || []).reduce((sum, category) => {
-        const planned = category?.budget?.planned_amount
-        const parsed = planned !== undefined && planned !== null ? parseFloat(planned) : 0
-        return Number.isFinite(parsed) ? sum + parsed : sum
-    }, 0)
-})
-
-const remainingIncomeAfterBudget = computed(() => totalIncomeAmount.value - totalPlannedBudget.value)
-
-const budgetCoveragePercentage = computed(() => {
-    const income = totalIncomeAmount.value
-    if (income <= 0) {
-        return totalPlannedBudget.value > 0 ? 100 : 0
-    }
-    const ratio = (totalPlannedBudget.value / income) * 100
-    return Math.round(Math.min(Math.max(ratio, 0), 999))
-})
-
-const budgetCoveragePercentageDisplay = computed(() => budgetCoveragePercentage.value.toFixed(0))
-
-const totalBudgetProgressWidth = computed(() => `${Math.min(budgetCoveragePercentage.value, 100)}%`)
-
-const totalBudgetProgressBarClass = computed(() => {
-    if (budgetCoveragePercentage.value > 110) return 'bg-red-500'
-    if (budgetCoveragePercentage.value > 95) return 'bg-orange-400'
-    if (budgetCoveragePercentage.value > 75) return 'bg-yellow-400'
-    return 'bg-indigo-500'
-})
-
-const remainingIncomeClass = computed(() => {
-    if (remainingIncomeAfterBudget.value < 0) return 'text-red-600 font-semibold'
-    if (remainingIncomeAfterBudget.value === 0) return 'text-gray-600 font-semibold'
-    return 'text-green-600 font-semibold'
-})
 
 const categoryTypeBadgeClass = (type) => {
     if (type === 'income') {
@@ -957,35 +919,7 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                 @update:year="handleYearUpdate"
                 @update:month="handleMonthUpdate"
                 @today="handleToday"
-            >
-                <template #summary>
-                    <div class="h-full rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm">
-                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-end lg:text-left">
-                            <div>
-                                <p class="text-xs text-indigo-700">
-                                    סך התקציבים המתוכננים עבור {{ selectedMonthLabel }} {{ selectedYear }}.
-                                </p>
-                            </div>
-                            <div class="text-sm font-semibold text-indigo-900">
-                                {{ formatCurrency(totalPlannedBudget) }} ₪ מתוך {{ formatCurrency(totalIncomeAmount) }} ₪ הכנסות
-                            </div>
-                        </div>
-                        <div class="mt-3 h-2.5 w-full rounded-full bg-white/70">
-                            <div
-                                class="h-2.5 rounded-full transition-all duration-500"
-                                :class="totalBudgetProgressBarClass"
-                                :style="{ width: totalBudgetProgressWidth }"
-                            ></div>
-                        </div>
-                        <div class="mt-2 flex flex-col gap-1 text-xs text-indigo-900 sm:flex-row sm:items-center sm:justify-between">
-                            <span>כיסוי תקציב: {{ budgetCoveragePercentageDisplay }}%</span>
-                            <span :class="remainingIncomeClass">
-                                נותר להקצות: {{ formatCurrency(remainingIncomeAfterBudget) }} ₪
-                            </span>
-                        </div>
-                    </div>
-                </template>
-            </PeriodHeader>
+            ></PeriodHeader>
         </template>
 
         <div class="py-6">

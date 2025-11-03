@@ -26,6 +26,7 @@ Route::get('/', function () {
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/cashflow', [DashboardController::class, 'cashflow'])->name('cashflow.index');
+    Route::get('/cashflow/statement', [DashboardController::class, 'cashflowStatement'])->name('cashflow.statement');
     Route::get('/budgets/overview', [DashboardController::class, 'budgets'])->name('budgets.overview');
     Route::get('/cashflow/sources', [DashboardController::class, 'cashflowSources'])->name('cashflow.sources.index');
     Route::get('/cashflow/import', [CashflowImportController::class, 'index'])->name('cashflow.import.index');
