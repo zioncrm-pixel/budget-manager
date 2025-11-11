@@ -57,6 +57,10 @@ const props = defineProps({
         default: 'end',
         validator: value => ['start', 'end'].includes(value),
     },
+    budgetSummaryFullWidth: {
+        type: Boolean,
+        default: true,
+    },
 })
 
 const emit = defineEmits(['update:year', 'update:month', 'today'])
@@ -176,20 +180,24 @@ const summaryCardPlacementClass = computed(() => {
 
     return ''
 })
+
+const budgetSummaryFullWidth = computed(() => props.budgetSummaryFullWidth !== false)
 </script>
 
 <template>
     <div class="flex flex-col gap-3 text-right lg:flex-row lg:items-stretch lg:gap-4">
         <div class="flex items-stretch justify-end lg:flex-none">
             <div class="flex h-full w-full flex-col items-end gap-2 rounded-md border border-indigo-100 bg-white px-3 py-2 text-sm text-gray-500 shadow-sm lg:min-w-[190px]">
-                <slot name="period-label">
-                    <span>
-                        {{ periodLabel }}
-                        <span class="font-semibold text-gray-900">
-                            {{ periodDisplay }}
+                <div class="w-full text-right">
+                    <slot dir="rtl" name="period-label">
+                        <span>
+                            {{ periodLabel }}
+                            <span class="font-semibold text-gray-900">
+                                {{ periodDisplay }}
+                            </span>
                         </span>
-                    </span>
-                </slot>
+                    </slot>
+                </div>
                 <PeriodSelector
                     :selected-year="selectedYear"
                     :selected-month="selectedMonth"
@@ -228,15 +236,15 @@ const summaryCardPlacementClass = computed(() => {
                 <div
                     v-if="showBudgetSummaryCard"
                     class="h-full rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm"
-                    :class="summaryCardPlacementClass"
+                    :class="[summaryCardPlacementClass, { 'w-full': budgetSummaryFullWidth }]"
                 >
-                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-end lg:text-left">
-                        <div>
+                    <div class="flex w-full flex-col gap-2 text-right sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-end">
+                        <div class="w-full text-right">
                             <p class="text-xs text-indigo-700">
                                 סך התקציבים המתוכננים עבור {{ selectedMonthLabel }} {{ resolvedYear }}.
                             </p>
                         </div>
-                        <div class="text-sm font-semibold text-indigo-900">
+                        <div class="w-full text-right text-sm font-semibold text-indigo-900">
                             {{ formatCurrency(totalPlannedBudget) }} ₪ מתוך {{ formatCurrency(totalIncomeAmount) }} ₪ הכנסות
                         </div>
                     </div>

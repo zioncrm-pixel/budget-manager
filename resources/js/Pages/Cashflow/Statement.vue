@@ -1405,7 +1405,7 @@ watch(bulkMinDate, (min) => {
                                     <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         <button
                                             type="button"
-                                            class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                            class="flex w-full flex-row-reverse items-center justify-end gap-1 text-right transition hover:text-indigo-500"
                                             :class="isAccountColumnSorted('date') ? 'text-indigo-600' : 'text-gray-600'"
                                             @click="toggleAccountSort('date')"
                                         >
@@ -1416,7 +1416,7 @@ watch(bulkMinDate, (min) => {
                                     <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         <button
                                             type="button"
-                                            class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                            class="flex w-full flex-row-reverse items-center justify-end gap-1 text-right transition hover:text-indigo-500"
                                             :class="isAccountColumnSorted('description') ? 'text-indigo-600' : 'text-gray-600'"
                                             @click="toggleAccountSort('description')"
                                         >
@@ -1430,7 +1430,7 @@ watch(bulkMinDate, (min) => {
                                     <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         <button
                                             type="button"
-                                            class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                            class="flex w-full flex-row-reverse items-center justify-end gap-1 text-right transition hover:text-indigo-500"
                                             :class="isAccountColumnSorted('type') ? 'text-indigo-600' : 'text-gray-600'"
                                             @click="toggleAccountSort('type')"
                                         >
@@ -1441,7 +1441,7 @@ watch(bulkMinDate, (min) => {
                                     <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         <button
                                             type="button"
-                                            class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                            class="flex w-full flex-row-reverse items-center justify-end gap-1 text-right transition hover:text-indigo-500"
                                             :class="isAccountColumnSorted('amount') ? 'text-indigo-600' : 'text-gray-600'"
                                             @click="toggleAccountSort('amount')"
                                         >
@@ -1476,8 +1476,8 @@ watch(bulkMinDate, (min) => {
                                             {{ getRowDisplayDate(row) }}
                                         </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
-                                            <div class="flex items-center justify-end gap-2">
-                                                <span class="text-lg">{{ row.source_icon || '📊' }}</span>
+                                            <div class="flex items-center gap-2 text-right">
+                                                <span v-if="row.type === 'cash_flow_source'" class="text-lg">{{ row.source_icon || '📊' }}</span>
                                                 <div class="flex flex-col text-right">
                                                     <span class="font-medium text-gray-900">{{ row.source_name }}</span>
                                                     <span v-if="row.type === 'cash_flow_source'" class="text-xs text-gray-500">
@@ -1487,7 +1487,10 @@ watch(bulkMinDate, (min) => {
                                             </div>
                                         </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">
-                                            <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                                            <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                                                <span v-if="row.type === 'individual_transaction'">
+                                                    {{ row.source_icon || '📄' }}
+                                                </span>
                                                 {{ getRowCategoryLabel(row) }}
                                             </span>
                                         </td>
@@ -1543,7 +1546,7 @@ watch(bulkMinDate, (min) => {
                                     </tr>
                                     <tr v-if="isRowExpanded(row)" class="bg-indigo-50/40">
                                         <td colspan="7" class="px-4 py-4">
-                                            <div class="space-y-4">
+                                            <div class="space-y-4 rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm shadow-indigo-100/70">
                                                 <div class="flex flex-wrap items-center justify-between gap-3" dir="rtl">
                                                     <div class="flex flex-wrap items-center gap-3 text-xs text-gray-600">
                                                         <template v-if="row.type === 'cash_flow_source' && row.allows_refunds">
@@ -1571,33 +1574,36 @@ watch(bulkMinDate, (min) => {
                                                             🗂️ שיוך לקטגוריה
                                                         </button>
                                                         <button
+                                                        v-if="selectedTransactionsCount"
                                                             type="button"
                                                             class="inline-flex items-center rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700 transition-colors hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-60"
                                                             :disabled="!hasTransactionSelection"
                                                             @click.stop="openBulkDuplicateModal('transactions')"
                                                         >
                                                             📄 שכפל נבחרים
-                                                            <span v-if="selectedTransactionsCount" class="ml-1">({{ selectedTransactionsCount }})</span>
+                                                            <span class="ml-1">({{ selectedTransactionsCount }})</span>
                                                         </button>
                                                         <button
+                                                        v-if="hasTransactionSelection || isBulkDeleting"
                                                             type="button"
                                                         class="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                                                             :disabled="!hasTransactionSelection || isBulkDeleting"
                                                             @click.stop="confirmBulkDelete('transactions')"
                                                         >
                                                             <svg
-                                                                v-if="isBulkDeleting"
+                                                                v-if="!hasTransactionSelection"
                                                                 class="-ml-1 mr-1 h-4 w-4 animate-spin text-red-700"
                                                                 xmlns="http://www.w3.org/2000/svg"
                                                                 fill="none"
                                                                 viewBox="0 0 24 24"
                                                             >
-                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                <circle v-if="isBulkDeleting" class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                                                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                                             </svg>
                                                             🗑️ מחק נבחרים
                                                         </button>
                                                         <button
+                                                        v-if="hasTransactionSelection"
                                                             type="button"
                                                             class="inline-flex items-center rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-500 transition-colors hover:bg-gray-100"
                                                             :disabled="!hasTransactionSelection"
@@ -1669,7 +1675,7 @@ watch(bulkMinDate, (min) => {
                                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                                     <button
                                                                         type="button"
-                                                                        class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                                                        class="flex flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
                                                                         :class="isTransactionColumnSorted('date') ? 'text-indigo-600' : 'text-gray-600'"
                                                                         @click="toggleTransactionSort('date')"
                                                                     >
@@ -1680,7 +1686,7 @@ watch(bulkMinDate, (min) => {
                                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                                     <button
                                                                         type="button"
-                                                                        class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                                                        class="flex flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
                                                                         :class="isTransactionColumnSorted('posting_date') ? 'text-indigo-600' : 'text-gray-600'"
                                                                         @click="toggleTransactionSort('posting_date')"
                                                                     >
@@ -1691,7 +1697,7 @@ watch(bulkMinDate, (min) => {
                                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                                     <button
                                                                         type="button"
-                                                                        class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                                                        class="flex flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
                                                                         :class="isTransactionColumnSorted('description') ? 'text-indigo-600' : 'text-gray-600'"
                                                                         @click="toggleTransactionSort('description')"
                                                                     >
@@ -1702,7 +1708,7 @@ watch(bulkMinDate, (min) => {
                                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                                     <button
                                                                         type="button"
-                                                                        class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                                                        class="flex flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
                                                                         :class="isTransactionColumnSorted('category') ? 'text-indigo-600' : 'text-gray-600'"
                                                                         @click="toggleTransactionSort('category')"
                                                                     >
@@ -1713,7 +1719,7 @@ watch(bulkMinDate, (min) => {
                                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                                     <button
                                                                         type="button"
-                                                                        class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                                                        class="flex flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
                                                                         :class="isTransactionColumnSorted('amount') ? 'text-indigo-600' : 'text-gray-600'"
                                                                         @click="toggleTransactionSort('amount')"
                                                                     >
@@ -1724,7 +1730,7 @@ watch(bulkMinDate, (min) => {
                                                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                                     <button
                                                                         type="button"
-                                                                        class="flex w-full flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
+                                                                        class="flex flex-row-reverse items-center justify-between gap-1 text-right transition hover:text-indigo-500"
                                                                         :class="isTransactionColumnSorted('status') ? 'text-indigo-600' : 'text-gray-600'"
                                                                         @click="toggleTransactionSort('status')"
                                                                     >
@@ -1761,7 +1767,7 @@ watch(bulkMinDate, (min) => {
                                                                     {{ transaction.description }}
                                                                 </td>
                                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
-                                                                    <div class="flex items-center justify-end gap-2">
+                                                                    <div class="flex items-center gap-2">
                                                                         <span class="text-lg">{{ transaction.category?.icon || '📊' }}</span>
                                                                         <span class="font-medium">{{ transaction.category?.name || 'לא מוגדר' }}</span>
                                                                     </div>

@@ -8,6 +8,7 @@ import { Link } from '@inertiajs/vue3';
 import { loadPeriod, PERIOD_STORAGE_KEY } from '@/utils/periodStorage';
 
 const showingNavigationDropdown = ref(false);
+const showingProfilePanel = ref(false);
 const storedPeriod = ref(typeof window !== 'undefined' ? loadPeriod() : null);
 
 const navigationItems = [
@@ -53,6 +54,16 @@ const handleStorageEvent = (event) => {
     }
 };
 
+const closeProfilePanel = () => {
+    showingProfilePanel.value = false;
+};
+
+const handleProfilePanelKeydown = (event) => {
+    if (event.key === 'Escape') {
+        closeProfilePanel();
+    }
+};
+
 onMounted(() => {
     if (typeof window === 'undefined') {
         return;
@@ -60,6 +71,7 @@ onMounted(() => {
 
     window.addEventListener('bm:period-changed', updateStoredPeriod);
     window.addEventListener('storage', handleStorageEvent);
+    window.addEventListener('keydown', handleProfilePanelKeydown);
 });
 
 onBeforeUnmount(() => {
@@ -69,6 +81,7 @@ onBeforeUnmount(() => {
 
     window.removeEventListener('bm:period-changed', updateStoredPeriod);
     window.removeEventListener('storage', handleStorageEvent);
+    window.removeEventListener('keydown', handleProfilePanelKeydown);
 });
 
 const linkWithPeriod = (name, params = {}) => {
@@ -98,13 +111,13 @@ const linkWithPeriod = (name, params = {}) => {
                         <ApplicationLogo class="h-6 w-6 fill-current text-indigo-600" />
                         <span class="sr-only">Budget Manager</span>
                     </Link>
-                    <nav class="mt-8 flex flex-1 flex-col items-center space-y-4 overflow-y-auto">
+                    <nav class="mt-8 flex flex-1 flex-col items-center space-y-4 overflow-y-auto text-xs font-medium text-gray-500">
                         <Link
                             v-for="item in navigationItems"
                             :key="item.routeName"
                             :href="linkWithPeriod(item.routeName)"
                             :title="item.name"
-                            class="group flex h-11 w-11 items-center justify-center rounded-full border border-transparent transition hover:border-indigo-200 hover:bg-indigo-50"
+                            class="group flex flex-col items-center gap-1 rounded-2xl border border-transparent px-2 py-2 transition hover:border-indigo-200 hover:bg-indigo-50"
                             :class="route().current(item.routeName) ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'text-gray-400'"
                         >
                             <svg
@@ -122,35 +135,22 @@ const linkWithPeriod = (name, params = {}) => {
                                     :d="item.iconPath"
                                 />
                             </svg>
-                            <span class="sr-only">{{ item.name }}</span>
+                            <span class="text-center text-[11px] leading-tight" :class="route().current(item.routeName) ? 'text-indigo-600' : 'text-gray-500'">
+                                {{ item.name }}
+                            </span>
                         </Link>
                     </nav>
                 </div>
                 <div class="mt-auto flex flex-col items-center">
-                    <Dropdown align="right" width="48">
-                        <template #trigger>
-                            <button
-                                type="button"
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-transparent bg-gray-50 text-sm font-semibold text-gray-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 focus:outline-none"
-                                :title="$page.props.auth.user.name"
-                            >
-                                {{ ($page.props.auth.user.name || '').charAt(0) || 'א' }}
-                            </button>
-                        </template>
-
-                        <template #content>
-                            <DropdownLink :href="route('profile.edit')">
-                                Profile
-                            </DropdownLink>
-                            <DropdownLink
-                                :href="route('logout')"
-                                method="post"
-                                as="button"
-                            >
-                                Log Out
-                            </DropdownLink>
-                        </template>
-                    </Dropdown>
+                    <button
+                        type="button"
+                        class="flex h-12 w-12 items-center justify-center rounded-full border border-transparent bg-gray-50 text-sm font-semibold text-gray-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 focus:outline-none"
+                        :title="$page.props.auth.user.name"
+                        @click="showingProfilePanel = !showingProfilePanel"
+                    >
+                        {{ ($page.props.auth.user.name || '').charAt(0) || 'א' }}
+                    </button>
+                    <span class="mt-2 text-xs font-medium text-gray-500">פרופיל</span>
                 </div>
             </aside>
 
@@ -300,5 +300,69 @@ const linkWithPeriod = (name, params = {}) => {
                 </div>
             </div>
         </transition>
+
+        <transition name="fade">
+            <div
+                v-if="showingProfilePanel"
+                class="fixed inset-0 z-40 hidden bg-black/30 backdrop-blur-sm sm:block"
+                @click="closeProfilePanel"
+            ></div>
+        </transition>
+
+        <Transition
+            enter-active-class="transform transition ease-out duration-200"
+            enter-from-class="opacity-0 translate-x-6"
+            enter-to-class="opacity-100 translate-x-0"
+            leave-active-class="transform transition ease-in duration-150"
+            leave-from-class="opacity-100 translate-x-0"
+            leave-to-class="opacity-0 translate-x-6"
+        >
+            <div
+                v-if="showingProfilePanel"
+                class="fixed inset-y-6 right-20 z-50 hidden w-72 flex-col rounded-2xl border border-indigo-100 bg-white p-5 text-right shadow-2xl shadow-indigo-200/70 sm:flex"
+            >
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-semibold text-gray-500">פרופיל משתמש</p>
+                        <p class="text-lg font-bold text-gray-900">
+                            {{ $page.props.auth.user.name }}
+                        </p>
+                        <p class="text-xs text-gray-500">
+                            {{ $page.props.auth.user.email }}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="rounded-full p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+                        @click="closeProfilePanel"
+                    >
+                        <span class="sr-only">סגור פרופיל</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="mt-4 space-y-2">
+                    <Link
+                        :href="route('profile.edit')"
+                        class="flex w-full items-center justify-between rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100"
+                        @click="closeProfilePanel"
+                    >
+                        <span>ניהול פרופיל</span>
+                        <span aria-hidden="true">⚙️</span>
+                    </Link>
+                    <Link
+                        :href="route('logout')"
+                        method="post"
+                        as="button"
+                        class="flex w-full items-center justify-between rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+                        @click="closeProfilePanel"
+                    >
+                        <span>התנתק</span>
+                        <span aria-hidden="true">↩︎</span>
+                    </Link>
+                </div>
+            </div>
+        </Transition>
     </div>
 </template>

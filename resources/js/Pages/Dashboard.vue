@@ -715,6 +715,7 @@ watch(horizontalSourceOptions, (options) => {
                 :month-options="monthOptions"
                 summary-order="start"
                 budget-summary-placement="start"
+                :budget-summary-full-width="false"
                 @update:year="handleYearUpdate"
                 @update:month="handleMonthUpdate"
                 @today="handleToday"
