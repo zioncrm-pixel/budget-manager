@@ -41,6 +41,7 @@ const selectedCategory = ref(null)
 const isTransactionsModalOpen = ref(false)
 const transactionsCategory = ref(null)
 const duplicatingCategoryId = ref(null)
+const openCategoryActionId = ref(null)
 
 const allMonthOptions = [
     { value: 1, label: 'ינואר' },
@@ -341,6 +342,29 @@ const getContrastingTextColor = (hexColor) => {
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
     return luminance > 0.6 ? '#111827' : '#FFFFFF'
 }
+
+const toRgbaWithAlpha = (hexColor, alpha = 0.2) => {
+    if (typeof hexColor !== 'string') {
+        return `rgba(229, 231, 235, ${alpha})`
+    }
+
+    const sanitized = hexColor.replace('#', '').trim()
+    if (![3, 6].includes(sanitized.length) || !/^[0-9a-fA-F]+$/.test(sanitized)) {
+        return `rgba(229, 231, 235, ${alpha})`
+    }
+
+    const normalized = sanitized.length === 3
+        ? sanitized.split('').map(char => char + char).join('')
+        : sanitized
+
+    const r = parseInt(normalized.slice(0, 2), 16)
+    const g = parseInt(normalized.slice(2, 4), 16)
+    const b = parseInt(normalized.slice(4, 6), 16)
+
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const getCategoryHeaderBackground = (color) => toRgbaWithAlpha(color || '#E5E7EB', 0.2)
 
 const normalizeAssignmentTransaction = (transaction) => {
     const primaryDate = transaction?.primary_date
@@ -798,22 +822,6 @@ const handleToday = () => {
     navigateToPeriod(year, month)
 }
 
-onMounted(() => {
-    syncTabFromLocation()
-    if (typeof window !== 'undefined') {
-        window.addEventListener('popstate', handlePopState)
-    }
-    tryApplyStoredPeriod()
-})
-
-onBeforeUnmount(() => {
-    if (typeof window === 'undefined') {
-        return
-    }
-
-    window.removeEventListener('popstate', handlePopState)
-})
-
 const openNewCategoryModal = () => {
     modalMode.value = 'create'
     selectedCategory.value = null
@@ -841,12 +849,28 @@ const openTransactionsModal = (category) => {
     isTransactionsModalOpen.value = true
 }
 
+const getCategoryUniqueId = (category) => category?.category_id || category?.id
+
+const toggleCategoryActionMenu = (category) => {
+    const id = getCategoryUniqueId(category)
+    if (!id) {
+        openCategoryActionId.value = null
+        return
+    }
+
+    openCategoryActionId.value = openCategoryActionId.value === id ? null : id
+}
+
+const closeCategoryActionMenu = () => {
+    openCategoryActionId.value = null
+}
+
 const duplicateCategory = (category) => {
     if (!category) {
         return
     }
 
-    const categoryId = category.category_id || category.id
+    const categoryId = getCategoryUniqueId(category)
     duplicatingCategoryId.value = categoryId
 
     router.post(
@@ -900,6 +924,68 @@ const confirmCategoryDelete = (category) => {
 }
 
 const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) && props.categoriesWithBudgets.length > 0)
+
+const isDuplicatingCategory = (category) => {
+    const id = getCategoryUniqueId(category)
+    if (!id) {
+        return false
+    }
+
+    return duplicatingCategoryId.value === id
+}
+
+const isCategoryActionMenuOpen = (category) => {
+    const id = getCategoryUniqueId(category)
+    if (!id) {
+        return false
+    }
+
+    return openCategoryActionId.value === id
+}
+
+const handleEditCategoryClick = (category) => {
+    closeCategoryActionMenu()
+    openCategoryModal(category)
+}
+
+const handleDuplicateCategoryClick = (category) => {
+    closeCategoryActionMenu()
+    duplicateCategory(category)
+}
+
+const handleDeleteCategoryClick = (category) => {
+    closeCategoryActionMenu()
+    confirmCategoryDelete(category)
+}
+
+const handleGlobalCategoryActionClick = (event) => {
+    const target = event.target
+    if (typeof Element === 'undefined' || !(target instanceof Element)) {
+        return
+    }
+
+    if (!target.closest('[data-category-actions]')) {
+        closeCategoryActionMenu()
+    }
+}
+
+onMounted(() => {
+    if (typeof window !== 'undefined') {
+        window.addEventListener('popstate', handlePopState)
+        window.addEventListener('click', handleGlobalCategoryActionClick)
+    }
+    syncTabFromLocation()
+    tryApplyStoredPeriod()
+})
+
+onBeforeUnmount(() => {
+    if (typeof window === 'undefined') {
+        return
+    }
+
+    window.removeEventListener('popstate', handlePopState)
+    window.removeEventListener('click', handleGlobalCategoryActionClick)
+})
 </script>
 
 <template>
@@ -945,113 +1031,167 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                             <div
                                 v-for="category in categoriesWithBudgets"
                                 :key="category.category_id"
-                                class="flex h-full flex-col gap-4 rounded-lg border-2 border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
+                                class="flex h-full flex-col gap-4 rounded-lg border-2 border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md"
                                 :class="{
                                     'border-indigo-300 bg-indigo-50': category.budget,
                                     'opacity-75': category.is_active === false,
                                 }"
-                            >
-                                <div class="flex items-start justify-between gap-3">
-                                    <div class="flex items-center gap-3">
-                                        <span
-                                            class="flex h-12 w-12 items-center justify-center rounded-md text-3xl shadow-sm ring-1 ring-black/5"
-                                            :style="{
-                                                backgroundColor: category.category_color || '#E5E7EB',
-                                                color: getContrastingTextColor(category.category_color || '#E5E7EB'),
-                                            }"
-                                            aria-hidden="true"
-                                        >
-                                            {{ category.category_icon || '📁' }}
-                                        </span>
-                                        <div class="text-right">
-                                            <h4 class="text-lg font-semibold text-gray-900">{{ category.category_name }}</h4>
-                                            <div class="mt-2 flex items-center justify-end gap-2 text-xs">
-                                                <span class="inline-flex items-center rounded-full px-2.5 py-1 font-medium" :class="categoryTypeBadgeClass(category.type)">
-                                                    {{ categoryTypeLabel(category.type) }}
-                                                </span>
-                                                <span
-                                                    v-if="category.is_active === false"
-                                                    class="inline-flex items-center rounded-full bg-gray-200 px-2.5 py-1 font-medium text-gray-700"
-                                                >
-                                                    לא פעילה
-                                                </span>
+                            >        
+                                <div
+                                    class="px-3 py-2"
+                                    :style="{ backgroundColor: getCategoryHeaderBackground(category.category_color) }"
+                                >
+                                    <div class="flex items-center justify-between gap-3">
+                                        <div class="flex flex-1 items-center gap-3">
+                                            <span
+                                                class="flex h-10 w-10 items-center justify-center rounded-md text-2xl shadow-sm ring-1 ring-black/5"
+                                                :style="{ color: category.category_color || '#4F46E5' }"
+                                                aria-hidden="true"
+                                            >
+                                                {{ category.category_icon || '📁' }}
+                                            </span>
+                                            <div class="flex flex-1 flex-col text-right">
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <h4 class="text-lg font-semibold text-gray-900">
+                                                        {{ category.category_name }}
+                                                    </h4>
+                                                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium" :class="categoryTypeBadgeClass(category.type)">
+                                                        {{ categoryTypeLabel(category.type) }}
+                                                    </span>
+                                                </div>
+                                                <div class="mt-1 flex flex-wrap items-center justify-end gap-2 text-[11px] text-gray-600">
+                                                    <span
+                                                        v-if="category.is_active === false"
+                                                        class="inline-flex items-center rounded-full bg-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700"
+                                                    >
+                                                        לא פעילה
+                                                    </span>
+                                                    <span>
+                                                        {{ category.monthly_transaction_count ?? 0 }} עסקאות בחודש
+                                                    </span>
+                                                </div>
                                             </div>
+                                        </div>
+
+                                        <div class="relative" data-category-actions @click.stop>
+                                            <button
+                                                type="button"
+                                                class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 text-lg text-gray-500 transition hover:border-indigo-200 hover:text-indigo-600 focus:outline-none"
+                                                :disabled="isDuplicatingCategory(category)"
+                                                @click.stop="toggleCategoryActionMenu(category)"
+                                                :aria-expanded="isCategoryActionMenuOpen(category)"
+                                            >
+                                                <svg
+                                                    v-if="isDuplicatingCategory(category)"
+                                                    class="h-5 w-5 animate-spin text-indigo-600"
+                                                    xmlns="http://www.w3.org/2000/svg"
+                                                    fill="none"
+                                                    viewBox="0 0 24 24"
+                                                >
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                                                </svg>
+                                                <span v-else class="inline-block text-2xl leading-none">⋮</span>
+                                                <span class="sr-only">אפשרויות</span>
+                                            </button>
+
+                                            <transition
+                                                enter-active-class="transition transform duration-150 ease-out"
+                                                enter-from-class="opacity-0 translate-y-2"
+                                                enter-to-class="opacity-100 translate-y-0"
+                                                leave-active-class="transition transform duration-100 ease-in"
+                                                leave-from-class="opacity-100 translate-y-0"
+                                                leave-to-class="opacity-0 translate-y-2"
+                                            >
+                                                <div
+                                                    v-if="isCategoryActionMenuOpen(category)"
+                                                    class="absolute left-auto right-0 z-20 mt-2 w-40 rounded-xl border border-gray-200 bg-white p-2 text-xs font-semibold text-gray-600 shadow-lg"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-200 hover:text-indigo-700"
+                                                        @click="handleEditCategoryClick(category)"
+                                                    >
+                                                        ✏️
+                                                        <span>עריכה</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="mt-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-200 hover:text-indigo-700 disabled:opacity-60"
+                                                        :disabled="isDuplicatingCategory(category)"
+                                                        @click="handleDuplicateCategoryClick(category)"
+                                                    >
+                                                        <span class="flex items-center gap-1">
+                                                            <svg
+                                                                v-if="isDuplicatingCategory(category)"
+                                                                class="h-4 w-4 animate-spin text-gray-500"
+                                                                xmlns="http://www.w3.org/2000/svg"
+                                                                fill="none"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
+                                                            </svg>
+                                                            <span v-else>📄</span>
+                                                        </span>
+                                                        <span class="font-medium">שכפול</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="mt-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-200 hover:text-indigo-700"
+                                                        @click="handleDeleteCategoryClick(category)"
+                                                    >
+                                                        🗑️
+                                                        <span>מחיקה</span>
+                                                    </button>
+                                                </div>
+                                            </transition>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button class="text-sm font-semibold text-indigo-600 transition-colors hover:text-indigo-800" @click.stop="openTransactionsModal(category)">
+                               
+                                    <div v-if="category.description" class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                                        {{ category.description }}
+                                    </div>
+
+                                    <div v-if="category.budget" class="rounded-md border border-gray-200 bg-white p-3 text-sm shadow-sm">
+                                        <div class="flex items-center justify-between text-xs font-medium text-gray-500">
+                                            <span>תקציב לחודש</span>
+                                            <span>{{ formatCurrency(category.budget.planned_amount) }} ₪ מתוכנן</span>
+                                        </div>
+                                        <div class="mt-2 flex items-center justify-between text-sm">
+                                            <span>הוצאה נטו</span>
+                                            <span :class="budgetSpentClass(category.budget)">{{ formatCurrency(category.budget.spent_amount) }} ₪</span>
+                                        </div>
+                                        <div class="mt-1 flex items-center justify-between text-sm">
+                                            <span>נותר</span>
+                                            <span :class="category.budget.remaining_amount >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'">
+                                                {{ formatCurrency(category.budget.remaining_amount) }} ₪
+                                            </span>
+                                        </div>
+                                        <div class="mt-3 h-2 w-full rounded-full bg-gray-200">
+                                            <div
+                                                class="h-2 rounded-full transition-all duration-300"
+                                                :class="budgetProgressBarClass(category.budget.progress_percentage)"
+                                                :style="{ width: Math.min(category.budget.progress_percentage, 100) + '%' }"
+                                            ></div>
+                                        </div>
+                                        <div class="mt-1 text-center text-xs font-medium" :class="budgetProgressTextClass(category.budget.progress_percentage)">
+                                            {{ category.budget.progress_percentage }}% נוצל
                                         </div>
                                     </div>
 
-                                    <div class="flex items-center gap-2">
-                                        <button
-                                            class="inline-flex items-center rounded-md border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
-                                            @click.stop="openCategoryModal(category)"
-                                        >
-                                            ✏️ עריכה
-                                        </button>
-                                        <button
-                                            class="inline-flex items-center rounded-md border border-green-200 px-3 py-1.5 text-xs font-semibold text-green-600 transition-colors hover:bg-green-50 disabled:opacity-60"
-                                            :disabled="duplicatingCategoryId === (category.category_id || category.id)"
-                                            @click.stop="duplicateCategory(category)"
-                                        >
-                                            <svg
-                                                v-if="duplicatingCategoryId === (category.category_id || category.id)"
-                                                class="-ml-1 mr-2 h-4 w-4 animate-spin text-green-600"
-                                                xmlns="http://www.w3.org/2000/svg"
-                                                fill="none"
-                                                viewBox="0 0 24 24"
-                                            >
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                            </svg>
-                                            📄 שכפול
-                                        </button>
-                                        <button
-                                            class="inline-flex items-center rounded-md border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
-                                            @click.stop="confirmCategoryDelete(category)"
-                                        >
-                                            🗑️ מחיקה
+                                    <div v-else class="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">
+                                        {{ categoryBudgetPlaceholder(category.type) }}
+                                    </div>
+
+                                    <div class="mt-auto text-center">
+                                        <button class="text-sm font-semibold text-indigo-600 transition-colors hover:text-indigo-800" @click.stop="openTransactionsModal(category)">
+                                        לחץ כדי לגלות
                                         </button>
                                     </div>
-                                </div>
-
-                                <div v-if="category.description" class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                                    {{ category.description }}
-                                </div>
-
-                                <div v-if="category.budget" class="rounded-md border border-gray-200 bg-white p-3 text-sm shadow-sm">
-                                    <div class="flex items-center justify-between text-xs font-medium text-gray-500">
-                                        <span>תקציב לחודש</span>
-                                        <span>{{ formatCurrency(category.budget.planned_amount) }} ₪ מתוכנן</span>
-                                    </div>
-                                    <div class="mt-2 flex items-center justify-between text-sm">
-                                        <span>הוצאה נטו</span>
-                                        <span :class="budgetSpentClass(category.budget)">{{ formatCurrency(category.budget.spent_amount) }} ₪</span>
-                                    </div>
-                                    <div class="mt-1 flex items-center justify-between text-sm">
-                                        <span>נותר</span>
-                                        <span :class="category.budget.remaining_amount >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'">
-                                            {{ formatCurrency(category.budget.remaining_amount) }} ₪
-                                        </span>
-                                    </div>
-                                    <div class="mt-3 h-2 w-full rounded-full bg-gray-200">
-                                        <div
-                                            class="h-2 rounded-full transition-all duration-300"
-                                            :class="budgetProgressBarClass(category.budget.progress_percentage)"
-                                            :style="{ width: Math.min(category.budget.progress_percentage, 100) + '%' }"
-                                        ></div>
-                                    </div>
-                                    <div class="mt-1 text-center text-xs font-medium" :class="budgetProgressTextClass(category.budget.progress_percentage)">
-                                        {{ category.budget.progress_percentage }}% נוצל
-                                    </div>
-                                </div>
-
-                                <div v-else class="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">
-                                    {{ categoryBudgetPlaceholder(category.type) }}
-                                </div>
-
-                                <div class="mt-auto text-center">
-                                    <button class="text-sm font-semibold text-indigo-600 transition-colors hover:text-indigo-800" @click.stop="openTransactionsModal(category)">
-                                        ניהול עסקאות
-                                    </button>
-                                </div>
+                                </button>
                             </div>
                         </div>
 
@@ -1062,27 +1202,15 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
 
                     <div class="p-6" v-else>
                         <div class="flex flex-col gap-6">
-                            <div class="flex flex-col-reverse gap-3 text-right sm:flex-row sm:items-center sm:justify-between">
+                            <!-- <div class="flex flex-col-reverse gap-3 text-right sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                     <h3 class="text-lg font-semibold text-gray-900">שיוך עסקאות לקטגוריות</h3>
                                     <p class="text-sm text-gray-500">
                                         בחר תזרימים מהרשימה, ולאחר מכן לחץ על הקטגוריה המתאימה כדי להשלים את השיוך.
                                     </p>
                                 </div>
-                                <div class="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
-                                    <span class="text-sm text-gray-600">
-                                        {{ assignmentSelectionSummary }}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        class="inline-flex items-center rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                                        :disabled="!hasAssignmentSelection || isAssignmentSubmitting"
-                                        @click="clearTransactionSelection"
-                                    >
-                                        נקה בחירה
-                                    </button>
-                                </div>
-                            </div>
+                                
+                            </div> -->
 
                             <div
                                 v-if="assignmentFeedback"
@@ -1100,8 +1228,8 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
 
                             <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-stretch">
                                 <div class="lg:col-span-1">
-                                    <div class="flex h-full min-h-0 flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-                                        <div class="flex flex-col gap-3">
+                                    <div class="flex h-full min-h-0 flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                                        <div class="flex items-center justify-between text-xs text-gray-500">
                                             <div class="flex items-center gap-2 text-sm text-gray-600">
                                                 <input
                                                     id="show-unassigned"
@@ -1113,11 +1241,23 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                                                     הצג רק עסקאות ללא קטגוריה
                                                 </label>
                                             </div>
-                                            
+                                            <div class="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+                                                <span class="text-sm text-gray-600">
+                                                    {{ assignmentSelectionSummary }}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex items-center rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                                                    :disabled="!hasAssignmentSelection || isAssignmentSubmitting"
+                                                    @click="clearTransactionSelection"
+                                                >
+                                                    נקה בחירה
+                                                </button>
+                                            </div>
                                         </div>
-
                                         <div class="flex items-center justify-between text-xs text-gray-500">
                                             <span>סה"כ תזרימים בחודש: {{ assignmentTransactions.length }}</span>
+                                            
                                             <!-- <button
                                                 type="button"
                                                 class="text-indigo-600 transition hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1254,16 +1394,19 @@ const hasCategories = computed(() => Array.isArray(props.categoriesWithBudgets) 
                                 </div>
 
                                 <div class="lg:col-span-1">
-                                    <div class="flex h-full flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-                                        <div class="flex flex-col gap-1 text-right">
+                                    <div class="flex h-full flex-col gap-1 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                                        <div class="flex items-center justify-between text-xs text-gray-500">
                                             <h4 class="text-base font-semibold text-gray-900">קטגוריות זמינות</h4>
                                             <p class="text-xs text-gray-500">
                                                 לחיצה על קטגוריה תשייך אליה את כל התזרימים שנבחרו.
                                             </p>
+                                        </div>
+                                        <div class="flex items-center justify-between text-xs text-gray-500">
                                             <span class="text-xs text-gray-500">
                                                 קטגוריות פעילות: {{ assignmentCategories.length }}
                                             </span>
                                         </div>
+                                        
 
                                         <div class="relative">
                                             <input

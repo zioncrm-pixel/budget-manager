@@ -909,6 +909,23 @@ class DashboardController extends Controller
     {
         $budgets = $user->getOrCreateBudgetsForMonth($year, $month);
 
+        $transactionCounts = $user->transactions()
+            ->select('category_id', DB::raw('COUNT(*) as transaction_count'))
+            ->whereNotNull('category_id')
+            ->where(function ($query) use ($year, $month) {
+                $query->where(function ($subQuery) use ($year, $month) {
+                    $subQuery->whereNotNull('posting_date')
+                        ->whereYear('posting_date', $year)
+                        ->whereMonth('posting_date', $month);
+                })->orWhere(function ($subQuery) use ($year, $month) {
+                    $subQuery->whereNull('posting_date')
+                        ->whereYear('transaction_date', $year)
+                        ->whereMonth('transaction_date', $month);
+                });
+            })
+            ->groupBy('category_id')
+            ->pluck('transaction_count', 'category_id');
+
         return $user->categories()
             ->where('is_active', true)
             ->with(['budgets' => function ($query) use ($year, $month) {
@@ -916,7 +933,7 @@ class DashboardController extends Controller
             }])
             ->orderBy('name')
             ->get()
-            ->map(function ($category) use ($budgets) {
+            ->map(function ($category) use ($budgets, $transactionCounts) {
                 $budget = $budgets->firstWhere('category_id', $category->id);
 
                 return [
@@ -928,6 +945,7 @@ class DashboardController extends Controller
                     'type' => $category->type,
                     'description' => $category->description,
                     'is_active' => $category->is_active,
+                    'monthly_transaction_count' => (int) $transactionCounts->get($category->id, 0),
                     'created_at' => optional($category->created_at)->toIso8601String(),
                     'updated_at' => optional($category->updated_at)->toIso8601String(),
                     'budget' => $budget ? [
