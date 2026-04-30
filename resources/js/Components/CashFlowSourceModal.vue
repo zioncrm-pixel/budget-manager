@@ -53,6 +53,21 @@
                     <InputError :message="form.errors.allows_refunds" class="mt-2" />
                 </div>
 
+                <div>
+                    <InputLabel value="אל תכלול בסיכום הכללי" />
+                    <label class="mt-3 inline-flex items-start gap-2 text-sm text-gray-700">
+                        <input
+                            type="checkbox"
+                            class="mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            v-model="form.exclude_from_totals"
+                        />
+                        <span>
+                            כאשר מסומן, עסקאות המקור לא ייכנסו לחישובי הכנסות/הוצאות/יתרה ולתקציבים/גרפים כלליים.
+                        </span>
+                    </label>
+                    <InputError :message="form.errors.exclude_from_totals" class="mt-2" />
+                </div>
+
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                         <InputLabel for="source_color_hex" value="צבע" />
@@ -115,6 +130,20 @@
                         </select>
                         <InputError :message="form.errors.month" class="mt-2" />
                     </div>
+                </div>
+
+                <div class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                    <label class="flex items-start gap-3 text-sm text-gray-700">
+                        <input
+                            type="checkbox"
+                            class="mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            v-model="form.limit_to_period"
+                        />
+                        <span>
+                            הצג את המקור רק בחודש {{ form.month }} {{ form.year }}. כשלא מסומן המקור יוצג בכל החודשים.
+                        </span>
+                    </label>
+                    <InputError :message="form.errors.limit_to_period" class="mt-2" />
                 </div>
 
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -279,6 +308,8 @@ const form = useForm({
     planned_amount: '',
     year: new Date().getFullYear(),
     month: new Date().getMonth() + 1,
+    limit_to_period: false,
+    exclude_from_totals: false,
 })
 
 const deleteForm = useForm({})
@@ -302,6 +333,9 @@ const formattedUpdatedAt = computed(() => {
 
 const initializeForm = () => {
     if (props.source) {
+        const sourceYear = props.source.year ?? props.source.budget?.year ?? props.year
+        const sourceMonth = props.source.month ?? props.source.budget?.month ?? props.month
+
         form.defaults({
             name: props.source.name || '',
             type: props.source.type || 'income',
@@ -311,8 +345,10 @@ const initializeForm = () => {
             is_active: props.source.is_active ?? true,
             allows_refunds: props.source.allows_refunds ?? false,
             planned_amount: props.source.budget?.planned_amount ? Number(props.source.budget.planned_amount).toFixed(2) : '',
-            year: props.source.budget?.year || props.year,
-            month: props.source.budget?.month || props.month,
+            year: sourceYear,
+            month: sourceMonth,
+            limit_to_period: Boolean(props.source.year && props.source.month),
+            exclude_from_totals: props.source.exclude_from_totals ?? false,
         })
     } else {
         form.defaults({
@@ -326,6 +362,8 @@ const initializeForm = () => {
             planned_amount: '',
             year: props.year,
             month: props.month,
+            limit_to_period: false,
+            exclude_from_totals: false,
         })
     }
 

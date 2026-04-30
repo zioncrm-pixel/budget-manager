@@ -16,6 +16,9 @@ class ImportProcessRequest extends FormRequest
     {
         $mapping = $this->input('mapping', []);
 
+        $mapping['date'] ??= [];
+        $mapping['date']['mode'] = $mapping['date']['mode'] ?? 'column';
+
         $mapping['type'] ??= [];
         $mapping['type']['mode'] = $mapping['type']['mode'] ?? 'auto_from_amount';
 
@@ -45,7 +48,9 @@ class ImportProcessRequest extends FormRequest
             'mapping' => ['required', 'array'],
 
             'mapping.date' => ['required', 'array'],
-            'mapping.date.column' => ['required', 'integer', 'min:0'],
+            'mapping.date.mode' => ['required', Rule::in(['column', 'fixed'])],
+            'mapping.date.column' => ['required_if:mapping.date.mode,column', 'nullable', 'integer', 'min:0'],
+            'mapping.date.value' => ['required_if:mapping.date.mode,fixed', 'nullable', 'string', 'max:64'],
             'mapping.date.format' => ['nullable', 'string', 'max:32'],
 
             'mapping.description' => ['required', 'array'],

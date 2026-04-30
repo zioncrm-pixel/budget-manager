@@ -52,6 +52,9 @@ class CashflowImportController extends Controller
                 'color' => $source->color,
                 'icon' => $source->icon,
                 'allows_refunds' => $source->allows_refunds,
+                'year' => $source->year,
+                'month' => $source->month,
+                'exclude_from_totals' => $source->exclude_from_totals,
             ]);
 
         return Inertia::render('Cashflow/Import', [

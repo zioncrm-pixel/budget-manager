@@ -55,11 +55,14 @@ class TransactionController extends Controller
     public function formOptions(Request $request): JsonResponse
     {
         $user = $request->user();
+        $year = $request->filled('year') ? (int) $request->year : null;
+        $month = $request->filled('month') ? (int) $request->month : null;
 
         return response()->json([
             'categories' => Category::where('user_id', $user->id)->orderBy('name')->get(),
             'cashFlowSources' => CashFlowSource::where('user_id', $user->id)
                 ->where('is_active', true)
+                ->visibleForPeriod($year, $month)
                 ->orderBy('name')
                 ->get(),
             'budgets' => Budget::where('user_id', $user->id)
@@ -96,6 +99,26 @@ class TransactionController extends Controller
             if ($cashFlowSource->type !== $data['type'] && !$cashFlowSource->allows_refunds) {
                 return response()->json([
                     'message' => 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה',
+                ], 422);
+            }
+        }
+
+        $transactionDate = Carbon::parse($data['transaction_date']);
+
+        if ($cashFlowSource && $cashFlowSource->year && $cashFlowSource->month) {
+            if ((int) $cashFlowSource->year !== (int) $transactionDate->year || (int) $cashFlowSource->month !== (int) $transactionDate->month) {
+                return response()->json([
+                    'message' => 'מקור התזרים מוגבל לחודש אחר',
+                ], 422);
+            }
+        }
+
+        $transactionDate = Carbon::parse($data['transaction_date']);
+
+        if ($cashFlowSource && $cashFlowSource->year && $cashFlowSource->month) {
+            if ((int) $cashFlowSource->year !== (int) $transactionDate->year || (int) $cashFlowSource->month !== (int) $transactionDate->month) {
+                return response()->json([
+                    'message' => 'מקור התזרים מוגבל לחודש אחר',
                 ], 422);
             }
         }

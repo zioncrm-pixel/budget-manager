@@ -92,4 +92,15 @@ class Transaction extends Model
     {
         return $query->where('type', $type);
     }
+
+    // Scope להחרגת מקורות מסומנים לאי-חישוב
+    public function scopeWithoutExcludedSources($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('cash_flow_source_id')
+                ->orWhereHas('cashFlowSource', function ($sourceQuery) {
+                    $sourceQuery->where('exclude_from_totals', false);
+                });
+        });
+    }
 }

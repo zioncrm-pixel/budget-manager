@@ -43,6 +43,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/budgets/manage/category/{category}/transactions/available', [BudgetManagementController::class, 'availableTransactions'])->whereNumber('category')->name('budgets.manage.transactions.available');
     Route::post('/budgets/manage/category/{category}/transactions/assign', [BudgetManagementController::class, 'assignTransactions'])->whereNumber('category')->name('budgets.manage.transactions.assign');
     Route::delete('/budgets/manage/category/{category}/transactions/{transaction}', [BudgetManagementController::class, 'unassignTransaction'])->whereNumber('category')->whereNumber('transaction')->name('budgets.manage.transactions.unassign');
+    Route::post('/budgets/manage/transactions/auto-assign', [BudgetManagementController::class, 'autoAssign'])->name('budgets.manage.transactions.auto_assign');
     Route::post('/budgets/manage/category/{category}/duplicate', [BudgetManagementController::class, 'duplicateCategory'])->whereNumber('category')->name('budgets.manage.category.duplicate');
 
     Route::post('/cashflow/sources', [CashFlowSourceController::class, 'store'])->name('cashflow.sources.store');

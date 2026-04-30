@@ -314,7 +314,19 @@ const filteredCategories = computed(() => {
 
 const filteredCashFlowSources = computed(() => {
     if (!form.type) return []
-    return props.cashFlowSources.filter((source) => source.type === form.type)
+    return props.cashFlowSources.filter((source) => {
+        if (source.type !== form.type) return false
+
+        const sourceYear = Number(source.year)
+        const sourceMonth = Number(source.month)
+        const isScoped = Number.isFinite(sourceYear) && Number.isFinite(sourceMonth)
+
+        if (isScoped) {
+            return sourceYear === getContextYear() && sourceMonth === getContextMonth()
+        }
+
+        return true
+    })
 })
 
 const currentBudget = computed(() => {

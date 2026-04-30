@@ -155,6 +155,7 @@ class User extends Authenticatable
         return $this->transactions()
             ->where('type', 'income')
             ->whereNotNull('posting_date')
+            ->withoutExcludedSources()
             ->whereYear('posting_date', $year)
             ->whereMonth('posting_date', $month)
             ->sum('amount');
@@ -166,6 +167,7 @@ class User extends Authenticatable
         return $this->transactions()
             ->where('type', 'expense')
             ->whereNotNull('posting_date')
+            ->withoutExcludedSources()
             ->whereYear('posting_date', $year)
             ->whereMonth('posting_date', $month)
             ->sum('amount');
@@ -185,6 +187,7 @@ class User extends Authenticatable
         return $this->transactions()
             ->whereNotNull('special_expense_id')
             ->whereNotNull('posting_date')
+            ->withoutExcludedSources()
             ->whereYear('posting_date', $year)
             ->whereMonth('posting_date', $month)
             ->sum('amount');

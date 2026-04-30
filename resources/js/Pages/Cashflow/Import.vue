@@ -53,7 +53,7 @@ const excludedRows = ref([])
 const selectedHeaderRow = ref(null)
 
 const mapping = reactive({
-    date: { column: null, format: null },
+    date: { mode: 'column', column: null, format: null, value: null },
     description: { column: null },
     amount: {
         mode: 'single',
@@ -250,6 +250,13 @@ const hasAmountSelection = computed(() => {
 
     return mapping.amount.credit_column !== null || mapping.amount.debit_column !== null
 })
+const isTransactionDateSelectionValid = computed(() => {
+    if (mapping.date.mode === 'fixed') {
+        return Boolean(mapping.date.value && String(mapping.date.value).trim() !== '')
+    }
+
+    return mapping.date.column !== null && mapping.date.column !== undefined
+})
 const isPostingDateSelectionValid = computed(() => {
     if (mapping.posting_date.mode === 'column') {
         return mapping.posting_date.column !== null && mapping.posting_date.column !== undefined
@@ -277,7 +284,7 @@ const isTypeSelectionValid = computed(() => {
     return true
 })
 const canRequestPreview = computed(() =>
-    mapping.date.column !== null &&
+    isTransactionDateSelectionValid.value &&
     mapping.description.column !== null &&
     hasAmountSelection.value &&
     isPostingDateSelectionValid.value &&
@@ -310,6 +317,17 @@ watch(
             mapping.posting_date.value = null
         } else if (mode === 'fixed') {
             mapping.posting_date.column = null
+        }
+    }
+)
+
+watch(
+    () => mapping.date.mode,
+    (mode) => {
+        if (mode === 'column') {
+            mapping.date.value = null
+        } else if (mode === 'fixed') {
+            mapping.date.column = null
         }
     }
 )
@@ -347,7 +365,10 @@ function resetAllState(options = {}) {
     uploadState.error = null
     excludedRows.value = []
     selectedHeaderRow.value = null
+    mapping.date.mode = 'column'
     mapping.date.column = null
+    mapping.date.value = null
+    mapping.date.format = null
     mapping.description.column = null
     mapping.amount.mode = 'single'
     mapping.amount.column = null
@@ -429,7 +450,9 @@ function autoMapColumns() {
     const amountColumn = uploadState.columns.find(column => column.detected_types?.includes('number'))
     const descriptionColumn = uploadState.columns.find(column => column.index !== dateColumn?.index && column.index !== amountColumn?.index)
 
-    mapping.date.column = dateColumn?.index ?? 0
+    mapping.date.mode = 'column'
+    mapping.date.value = null
+    mapping.date.column = dateColumn?.index ?? (uploadState.columns[0]?.index ?? null)
     mapping.description.column = descriptionColumn?.index ?? (uploadState.columns[0]?.index ?? null)
     mapping.amount.column = amountColumn?.index ?? (uploadState.columns[uploadState.columns.length - 1]?.index ?? null)
 }
@@ -999,21 +1022,64 @@ async function handleClipboardAnalyze() {
                         </p>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">תאריך עסקה *</label>
-                                <select
-                                    v-model="mapping.date.column"
-                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                >
-                                    <option :value="null" disabled>בחר עמודה</option>
-                                    <option
-                                        v-for="column in columnOptions"
-                                        :key="column.value"
-                                        :value="column.value"
+                            <div class="md:col-span-2 border rounded-lg p-4">
+                                <div class="flex items-center justify-between mb-3">
+                                    <div>
+                                        <h3 class="text-sm font-semibold text-gray-700">תאריך עסקה *</h3>
+                                        <p class="text-xs text-gray-500 mt-1">
+                                            בחר טור עם תאריכי העסקאות או הגדר תאריך קבוע לכל השורות (מתאים לדוחות חודשיים).
+                                        </p>
+                                    </div>
+                                    <div class="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                                        <label class="inline-flex items-center">
+                                            <input
+                                                v-model="mapping.date.mode"
+                                                type="radio"
+                                                value="column"
+                                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+                                            <span class="mr-2">טור ייעודי</span>
+                                        </label>
+                                        <label class="inline-flex items-center">
+                                            <input
+                                                v-model="mapping.date.mode"
+                                                type="radio"
+                                                value="fixed"
+                                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+                                            <span class="mr-2">תאריך קבוע</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div v-if="mapping.date.mode === 'column'">
+                                    <select
+                                        v-model="mapping.date.column"
+                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                                     >
-                                        {{ column.label }} — {{ column.samples?.[0] ?? 'ללא דוגמה' }}
-                                    </option>
-                                </select>
+                                        <option :value="null" disabled>בחר עמודה</option>
+                                        <option
+                                            v-for="column in columnOptions"
+                                            :key="column.value"
+                                            :value="column.value"
+                                        >
+                                            {{ column.label }} — {{ column.samples?.[0] ?? 'ללא דוגמה' }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div v-else-if="mapping.date.mode === 'fixed'" class="mt-3 flex flex-wrap gap-3">
+                                    <input
+                                        v-model="mapping.date.value"
+                                        type="date"
+                                        class="block w-48 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                    />
+                                    <input
+                                        v-model="mapping.date.format"
+                                        type="text"
+                                        class="block w-48 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        placeholder="פורמט מותאם (אופציונלי)"
+                                    />
+                                </div>
                             </div>
 
                             <div class="md:col-span-2 border rounded-lg p-4">

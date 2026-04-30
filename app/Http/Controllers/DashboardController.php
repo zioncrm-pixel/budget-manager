@@ -25,7 +25,7 @@ class DashboardController extends Controller
 
         $totals = $this->calculateTotals($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
-        $cashFlowSources = $this->getCashFlowSources($user);
+        $cashFlowSources = $this->getCashFlowSources($user, (int) $year, (int) $month);
         $transactions = $this->getTransactionsForPeriod($user, $year, $month);
         $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
         $incomeExpenseChart = $this->buildIncomeExpenseChartData($user, (int) $year, (int) $month);
@@ -61,7 +61,7 @@ class DashboardController extends Controller
         $accountStatementRows = $this->buildAccountStatementRows($user, $year, $month);
         $transactions = $this->getTransactionsForPeriod($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
-        $cashFlowSources = $this->getCashFlowSources($user);
+        $cashFlowSources = $this->getCashFlowSources($user, (int) $year, (int) $month);
         $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
 
         return Inertia::render('Cashflow/Manage', [
@@ -93,7 +93,7 @@ class DashboardController extends Controller
         $accountStatementRows = $this->buildAccountStatementRows($user, $year, $month);
         $transactions = $this->getTransactionsForPeriod($user, $year, $month);
         $categoriesWithBudgets = $this->getCategoriesWithBudgets($user, $year, $month);
-        $cashFlowSources = $this->getCashFlowSources($user);
+        $cashFlowSources = $this->getCashFlowSources($user, (int) $year, (int) $month);
         $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
 
         return Inertia::render('Cashflow/Statement', [
@@ -126,7 +126,7 @@ class DashboardController extends Controller
         $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
 
         $budgets = $user->getOrCreateBudgetsForMonth($year, $month);
-        $cashFlowSources = $this->getCashFlowSources($user);
+        $cashFlowSources = $this->getCashFlowSources($user, (int) $year, (int) $month);
         $allCategories = $user->categories()->orderBy('name')->get();
         $transactionsForAssignment = $this->getTransactionsForAssignment($user, $year, $month);
 
@@ -178,7 +178,7 @@ class DashboardController extends Controller
         $totals = $this->calculateTotals($user, $year, $month);
 
         $cashFlowSourcesWithStats = $this->getCashFlowSourcesWithStats($user, $year, $month);
-        $activeCashFlowSources = $this->getCashFlowSources($user);
+        $activeCashFlowSources = $this->getCashFlowSources($user, (int) $year, (int) $month);
         $accountStatus = $this->calculateAccountStatus($user, (int) $year, (int) $month);
         $allCashFlowSources = $user->cashFlowSources()->orderBy('name')->get()->map(function ($source) {
             return [
@@ -190,6 +190,9 @@ class DashboardController extends Controller
                 'description' => $source->description,
                 'is_active' => $source->is_active,
                 'allows_refunds' => $source->allows_refunds,
+                'year' => $source->year,
+                'month' => $source->month,
+                'exclude_from_totals' => $source->exclude_from_totals,
                 'created_at' => optional($source->created_at)->toIso8601String(),
                 'updated_at' => optional($source->updated_at)->toIso8601String(),
             ];
@@ -298,9 +301,23 @@ class DashboardController extends Controller
             })
             ->filter();
 
+        $scopedSourcePeriods = $user->cashFlowSources()
+            ->select(['year', 'month'])
+            ->whereNotNull('year')
+            ->whereNotNull('month')
+            ->get()
+            ->map(function ($source) {
+                return [
+                    'year' => isset($source->year) ? (int) $source->year : null,
+                    'month' => isset($source->month) ? (int) $source->month : null,
+                ];
+            })
+            ->filter();
+
         $periods = $transactionPeriods
             ->merge($categoryBudgetPeriods)
             ->merge($sourceBudgetPeriods)
+            ->merge($scopedSourcePeriods)
             ->filter(function ($period) {
                 return $period['year'] !== null
                     && $period['month'] !== null
@@ -358,6 +375,7 @@ class DashboardController extends Controller
     {
         $transactions = $user->transactions()
             ->whereNotNull('posting_date')
+            ->withoutExcludedSources()
             ->get(['type', 'amount', 'posting_date']);
 
         if ($transactions->isEmpty()) {
@@ -409,6 +427,7 @@ class DashboardController extends Controller
             ->with('category')
             ->where('type', 'expense')
             ->whereNotNull('posting_date')
+            ->withoutExcludedSources()
             ->get(['id', 'category_id', 'amount', 'posting_date']);
 
         if ($transactions->isEmpty()) {
@@ -693,6 +712,7 @@ class DashboardController extends Controller
 
         $totals = $user->transactions()
             ->whereNotNull('posting_date')
+            ->withoutExcludedSources()
             ->selectRaw("
                 SUM(
                     CASE
@@ -926,6 +946,20 @@ class DashboardController extends Controller
             ->groupBy('category_id')
             ->pluck('transaction_count', 'category_id');
 
+        $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
+
+        $excludedSourceCounts = $user->transactions()
+            ->select('category_id', DB::raw('COUNT(*) as transaction_count'))
+            ->whereNotNull('category_id')
+            ->whereNotNull('cash_flow_source_id')
+            ->whereYear($periodColumn, $year)
+            ->whereMonth($periodColumn, $month)
+            ->whereHas('cashFlowSource', function ($query) {
+                $query->where('exclude_from_totals', true);
+            })
+            ->groupBy('category_id')
+            ->pluck('transaction_count', 'category_id');
+
         return $user->categories()
             ->where('is_active', true)
             ->with(['budgets' => function ($query) use ($year, $month) {
@@ -933,7 +967,7 @@ class DashboardController extends Controller
             }])
             ->orderBy('name')
             ->get()
-            ->map(function ($category) use ($budgets, $transactionCounts) {
+            ->map(function ($category) use ($budgets, $transactionCounts, $excludedSourceCounts) {
                 $budget = $budgets->firstWhere('category_id', $category->id);
 
                 return [
@@ -946,6 +980,7 @@ class DashboardController extends Controller
                     'description' => $category->description,
                     'is_active' => $category->is_active,
                     'monthly_transaction_count' => (int) $transactionCounts->get($category->id, 0),
+                    'has_excluded_source_transactions' => (bool) $excludedSourceCounts->get($category->id, 0),
                     'created_at' => optional($category->created_at)->toIso8601String(),
                     'updated_at' => optional($category->updated_at)->toIso8601String(),
                     'budget' => $budget ? [
@@ -964,17 +999,21 @@ class DashboardController extends Controller
             });
     }
 
-    private function getCashFlowSources($user)
+    private function getCashFlowSources($user, ?int $year = null, ?int $month = null)
     {
         return $user->cashFlowSources()
             ->where('is_active', true)
+            ->visibleForPeriod($year, $month)
             ->orderBy('name')
             ->get();
     }
 
     private function getCashFlowSourcesWithStats($user, int $year, int $month)
     {
-        $sources = $user->cashFlowSources()->orderBy('name')->get();
+        $sources = $user->cashFlowSources()
+            ->visibleForPeriod($year, $month)
+            ->orderBy('name')
+            ->get();
 
         $aggregates = $user->transactions()
             ->select(
@@ -1061,6 +1100,9 @@ class DashboardController extends Controller
                 'description' => $source->description,
                 'is_active' => $source->is_active,
                 'allows_refunds' => $source->allows_refunds,
+                'year' => $source->year,
+                'month' => $source->month,
+                'exclude_from_totals' => $source->exclude_from_totals,
                 'created_at' => optional($source->created_at)->toIso8601String(),
                 'updated_at' => optional($source->updated_at)->toIso8601String(),
                 'monthly_total_amount' => $netAmount ?? 0.0,

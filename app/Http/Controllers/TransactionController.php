@@ -51,11 +51,17 @@ class TransactionController extends Controller
         
         $transactions = $query->orderBy('transaction_date', 'desc')
                              ->paginate(50);
+
+        $filterYear = $request->filled('year') ? (int) $request->year : null;
+        $filterMonth = $request->filled('month') ? (int) $request->month : null;
         
         return Inertia::render('Transactions/Index', [
             'transactions' => $transactions,
             'categories' => Category::where('user_id', $user->id)->get(),
-            'cashFlowSources' => CashFlowSource::where('user_id', $user->id)->where('is_active', true)->get(),
+            'cashFlowSources' => CashFlowSource::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->visibleForPeriod($filterYear, $filterMonth)
+                ->get(),
             'filters' => $request->only(['year', 'month', 'type', 'category_id', 'cash_flow_source_id'])
         ]);
     }
@@ -66,10 +72,15 @@ class TransactionController extends Controller
     public function create()
     {
         $user = Auth::user();
+        $currentYear = now()->year;
+        $currentMonth = now()->month;
         
         return Inertia::render('Transactions/Create', [
             'categories' => Category::where('user_id', $user->id)->get(),
-            'cashFlowSources' => CashFlowSource::where('user_id', $user->id)->where('is_active', true)->get(),
+            'cashFlowSources' => CashFlowSource::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->visibleForPeriod($currentYear, $currentMonth)
+                ->get(),
             'budgets' => Budget::where('user_id', $user->id)
                               ->whereYear('year', now()->year)
                               ->whereMonth('month', now()->month)
@@ -122,6 +133,16 @@ class TransactionController extends Controller
             if ($cashFlowSource->type !== $request->type && !$cashFlowSource->allows_refunds) {
                 return back()->withErrors([
                     'cash_flow_source_id' => 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה'
+                ]);
+            }
+        }
+
+        $transactionDate = Carbon::parse($request->transaction_date);
+
+        if ($cashFlowSource && $cashFlowSource->year && $cashFlowSource->month) {
+            if ((int) $cashFlowSource->year !== (int) $transactionDate->year || (int) $cashFlowSource->month !== (int) $transactionDate->month) {
+                return back()->withErrors([
+                    'cash_flow_source_id' => 'מקור התזרים מוגבל לחודש אחר',
                 ]);
             }
         }
@@ -184,11 +205,16 @@ class TransactionController extends Controller
         abort_if($transaction->user_id !== Auth::id(), 403);
 
         $user = Auth::user();
+        $transactionYear = $transaction->transaction_date?->year ?? now()->year;
+        $transactionMonth = $transaction->transaction_date?->month ?? now()->month;
         
         return Inertia::render('Transactions/Edit', [
             'transaction' => $transaction,
             'categories' => Category::where('user_id', $user->id)->get(),
-            'cashFlowSources' => CashFlowSource::where('user_id', $user->id)->where('is_active', true)->get(),
+            'cashFlowSources' => CashFlowSource::where('user_id', $user->id)
+                ->where('is_active', true)
+                ->visibleForPeriod($transactionYear, $transactionMonth)
+                ->get(),
             'budgets' => Budget::where('user_id', $user->id)
                               ->whereYear('year', $transaction->transaction_date->year)
                               ->whereMonth('month', $transaction->transaction_date->month)
@@ -239,6 +265,16 @@ class TransactionController extends Controller
             if ($cashFlowSource->type !== $request->type && !$cashFlowSource->allows_refunds) {
                 return back()->withErrors([
                     'cash_flow_source_id' => 'מקור התזרים שנבחר אינו מאפשר זיכויים מסוג זה'
+                ]);
+            }
+        }
+
+        $transactionDate = Carbon::parse($request->transaction_date);
+
+        if ($cashFlowSource && $cashFlowSource->year && $cashFlowSource->month) {
+            if ((int) $cashFlowSource->year !== (int) $transactionDate->year || (int) $cashFlowSource->month !== (int) $transactionDate->month) {
+                return back()->withErrors([
+                    'cash_flow_source_id' => 'מקור התזרים מוגבל לחודש אחר',
                 ]);
             }
         }

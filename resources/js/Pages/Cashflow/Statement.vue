@@ -173,7 +173,9 @@ const defaultAccountSort = () => ({ key: 'date', direction: 'desc' })
 const defaultTransactionSort = () => ({ key: 'date', direction: 'desc' })
 
 const accountSort = ref(defaultAccountSort())
+const accountSearchQuery = ref('')
 const transactionSort = ref({ key: null, direction: null })
+const transactionSearchQuery = ref('')
 const duplicatingSourceId = ref(null)
 const duplicatingTransactionId = ref(null)
 const selectedTransactionIds = ref([])
@@ -572,7 +574,14 @@ const getTransactionDateKey = (value) => {
 }
 
 const filteredTransactions = computed(() => {
-    const items = transactionsForSelectedRow.value
+    let items = transactionsForSelectedRow.value
+
+    if (selectedAccountRow.value?.type === 'cash_flow_source') {
+        const query = transactionSearchQuery.value
+        if (query && query.trim()) {
+            items = items.filter(transaction => transactionMatchesQuery(transaction, query))
+        }
+    }
 
     if (transactionDayFilter.value) {
         return items.filter(transaction => getTransactionDateKey(transaction.posting_date || transaction.transaction_date) === transactionDayFilter.value)
@@ -640,8 +649,19 @@ const areAllTransactionsSelected = computed(() => {
     const selectedSet = new Set(selectedTransactionIds.value)
     return transactions.every(transaction => selectedSet.has(transaction.id))
 })
+const filteredAccountStatementRows = computed(() => {
+    const rows = sortedAccountStatementRows.value || []
+    const query = accountSearchQuery.value
+
+    if (!query || !query.trim()) {
+        return rows
+    }
+
+    return rows.filter(row => accountRowMatchesQuery(row, query))
+})
+
 const selectableAccountRows = computed(() =>
-    (sortedAccountStatementRows.value || []).filter(row => row.type === 'individual_transaction' && row.transaction_id)
+    (filteredAccountStatementRows.value || []).filter(row => row.type === 'individual_transaction' && row.transaction_id)
 )
 const hasAccountSelection = computed(() => selectedAccountTransactionIds.value.length > 0)
 const selectedAccountCount = computed(() => selectedAccountTransactionIds.value.length)
@@ -848,6 +868,81 @@ const getRowCategoryLabel = (row) => {
     }
 
     return row.transaction_type === 'income' ? 'מקור הכנסה' : 'מקור הוצאה'
+}
+
+const normalizeSearchValue = (value) => {
+    if (value === undefined || value === null) {
+        return ''
+    }
+    return String(value).toLowerCase()
+}
+
+const accountRowMatchesQuery = (row, query) => {
+    if (!query) {
+        return true
+    }
+
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) {
+        return true
+    }
+
+    const fields = [
+        row.source_name,
+        row.category_name,
+        row.transaction_type,
+        row.formatted_amount,
+        row.transaction_count,
+    ]
+
+    if (row.type === 'cash_flow_source') {
+        fields.push(row.source_icon)
+    }
+
+    if (row.transaction_data) {
+        fields.push(
+            row.transaction_data.description,
+            row.transaction_data.notes,
+            row.transaction_data.reference_number,
+            row.transaction_data.amount,
+            row.transaction_data.category?.name,
+            row.transaction_data.cash_flow_source?.name
+        )
+    }
+
+    if (row.transaction_type) {
+        fields.push(getTransactionTypeName(row.transaction_type))
+    }
+
+    return fields
+        .filter((value) => value !== undefined && value !== null && value !== '')
+        .some((value) => normalizeSearchValue(value).includes(normalizedQuery))
+}
+
+const transactionMatchesQuery = (transaction, query) => {
+    if (!query) {
+        return true
+    }
+
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) {
+        return true
+    }
+
+    const fields = [
+        transaction.description,
+        transaction.notes,
+        transaction.reference_number,
+        transaction.amount,
+        transaction.type,
+        transaction.status,
+        transaction.category?.name,
+        transaction.cash_flow_source?.name,
+    ]
+
+    return fields
+        .filter((value) => value !== undefined && value !== null && value !== '')
+        .some((value) => normalizeSearchValue(value).includes(normalizedQuery))
 }
 
 const isRowExpanded = (row) => selectedAccountRow.value?.id === row?.id
@@ -1267,16 +1362,38 @@ watch(() => props.accountStatementRows, (newRows) => {
     }
 }, { immediate: true, deep: true })
 
+watch(filteredAccountStatementRows, (rows) => {
+    if (!selectedAccountRow.value) {
+        return
+    }
+
+    const exists = rows.some(row => row.id === selectedAccountRow.value.id)
+    if (!exists) {
+        selectedAccountRow.value = null
+    }
+})
+
+watch(selectableAccountRows, (rows) => {
+    const allowedSet = new Set(
+        rows
+            .map(row => Number(row.transaction_id))
+            .filter(Number.isFinite)
+    )
+    selectedAccountTransactionIds.value = selectedAccountTransactionIds.value.filter(id => allowedSet.has(id))
+}, { immediate: true })
+
 watch(selectedAccountRow, (row) => {
     if (!row) {
         transactionSort.value = { key: null, direction: null }
         selectedTransactionIds.value = []
         transactionDayFilter.value = null
         isDayFilterOpen.value = false
+        transactionSearchQuery.value = ''
     } else {
         selectedTransactionIds.value = []
         transactionDayFilter.value = null
         isDayFilterOpen.value = false
+        transactionSearchQuery.value = ''
     }
 })
 
@@ -1339,6 +1456,34 @@ watch(bulkMinDate, (min) => {
                         <div class="flex flex-col text-right">
                             <span class="text-sm font-semibold text-gray-900">שורות עו&quot;ש</span>
                             <span class="text-xs text-gray-500">לחץ על שורה כדי לפתוח את פירוט העסקאות.</span>
+                        </div>
+                        <div class="flex flex-1 min-w-[220px] justify-center">
+                            <div class="relative w-full max-w-xs">
+                                <label for="account-search-input" class="sr-only">חיפוש בשורות עו&quot;ש</label>
+                                <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z" />
+                                    </svg>
+                                </span>
+                                <input
+                                    id="account-search-input"
+                                    v-model="accountSearchQuery"
+                                    type="text"
+                                    class="w-full rounded-md border border-gray-300 bg-white py-2 pr-3 pl-9 text-right text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-indigo-500"
+                                    placeholder="חיפוש בשורות עו&quot;ש"
+                                />
+                                <button
+                                    v-if="accountSearchQuery"
+                                    type="button"
+                                    class="absolute inset-y-0 right-3 flex items-center text-gray-400 transition hover:text-gray-600"
+                                    @click="accountSearchQuery = ''"
+                                >
+                                    <span class="sr-only">נקה חיפוש</span>
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
                             <button
@@ -1453,7 +1598,7 @@ watch(bulkMinDate, (min) => {
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-200 bg-white">
-                                <template v-for="row in sortedAccountStatementRows" :key="row.id">
+                                <template v-for="row in filteredAccountStatementRows" :key="row.id">
                                     <tr
                                         class="cursor-pointer transition-colors"
                                         :class="{
@@ -1565,6 +1710,37 @@ watch(bulkMinDate, (min) => {
                                                         </template>
                                                     </div>
                                                     <div class="flex flex-wrap items-center gap-2" dir="rtl">
+                                                        <div
+                                                            v-if="row.type === 'cash_flow_source'"
+                                                            class="relative"
+                                                        >
+                                                            <label :for="`transaction-search-${row.id}`" class="sr-only">
+                                                                חיפוש ב-{{ row.source_name || 'מקור התזרים' }}
+                                                            </label>
+                                                            <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">
+                                                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z" />
+                                                                </svg>
+                                                            </span>
+                                                            <input
+                                                                :id="`transaction-search-${row.id}`"
+                                                                v-model="transactionSearchQuery"
+                                                                type="text"
+                                                                class="w-52 rounded-md border border-gray-300 bg-white py-1.5 pr-2 pl-8 text-right text-xs text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-indigo-500"
+                                                                :placeholder="`חיפוש ב-${row.source_name || 'מקור התזרים'}`"
+                                                            />
+                                                            <button
+                                                                v-if="transactionSearchQuery"
+                                                                type="button"
+                                                                class="absolute inset-y-0 right-2 flex items-center text-gray-400 transition hover:text-gray-600"
+                                                                @click.stop="transactionSearchQuery = ''"
+                                                            >
+                                                                <span class="sr-only">נקה חיפוש</span>
+                                                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                                                </svg>
+                                                            </button>
+                                                        </div>
                                                         <button
                                                             v-if="hasTransactionSelection"
                                                             type="button"
@@ -1816,7 +1992,7 @@ watch(bulkMinDate, (min) => {
                                         </td>
                                     </tr>
                                 </template>
-                                <tr v-if="!sortedAccountStatementRows.length">
+                                <tr v-if="!filteredAccountStatementRows.length">
                                     <td colspan="7" class="px-6 py-6 text-center text-sm text-gray-500">
                                         אין נתוני עו&quot;ש לתקופה זו.
                                     </td>

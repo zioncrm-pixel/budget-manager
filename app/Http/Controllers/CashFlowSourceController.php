@@ -12,6 +12,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class CashFlowSourceController extends Controller
 {
@@ -28,15 +29,22 @@ class CashFlowSourceController extends Controller
             'is_active' => ['required', 'boolean'],
             'allows_refunds' => ['required', 'boolean'],
             'planned_amount' => ['nullable', 'numeric', 'min:0'],
-            'year' => ['nullable', 'integer'],
-            'month' => ['nullable', 'integer', 'between:1,12'],
+            'year' => ['nullable', 'integer', Rule::requiredIf($request->boolean('limit_to_period'))],
+            'month' => ['nullable', 'integer', 'between:1,12', Rule::requiredIf($request->boolean('limit_to_period'))],
+            'limit_to_period' => ['sometimes', 'boolean'],
+            'exclude_from_totals' => ['sometimes', 'boolean'],
         ]);
 
         $data['is_active'] = (bool) $data['is_active'];
         $data['allows_refunds'] = (bool) $data['allows_refunds'];
+        $data['exclude_from_totals'] = (bool) ($data['exclude_from_totals'] ?? false);
 
-        DB::transaction(function () use ($user, $data): void {
-            $source = $user->cashFlowSources()->create(collect($data)->only([
+        $limitToPeriod = $request->boolean('limit_to_period', false);
+        $budgetYear = (int) ($data['year'] ?? now()->year);
+        $budgetMonth = (int) ($data['month'] ?? now()->month);
+
+        DB::transaction(function () use ($user, $data, $limitToPeriod, $budgetYear, $budgetMonth): void {
+            $sourceData = collect($data)->only([
                 'name',
                 'type',
                 'color',
@@ -44,9 +52,18 @@ class CashFlowSourceController extends Controller
                 'description',
                 'is_active',
                 'allows_refunds',
-            ])->all());
+            ])->all();
 
-            $this->upsertBudgetIfNeeded($user->id, $source, $data);
+            $sourceData['year'] = $limitToPeriod ? $budgetYear : null;
+            $sourceData['month'] = $limitToPeriod ? $budgetMonth : null;
+            $sourceData['exclude_from_totals'] = $data['exclude_from_totals'] ?? false;
+
+            $source = $user->cashFlowSources()->create($sourceData);
+
+            $this->upsertBudgetIfNeeded($user->id, $source, array_merge($data, [
+                'year' => $budgetYear,
+                'month' => $budgetMonth,
+            ]));
         });
 
         return back()->with('success', 'מקור התזרים נוסף בהצלחה');
@@ -65,28 +82,52 @@ class CashFlowSourceController extends Controller
             'is_active' => ['required', 'boolean'],
             'allows_refunds' => ['required', 'boolean'],
             'planned_amount' => ['nullable', 'numeric', 'min:0'],
-            'year' => ['nullable', 'integer'],
-            'month' => ['nullable', 'integer', 'between:1,12'],
+            'year' => ['nullable', 'integer', Rule::requiredIf($request->boolean('limit_to_period'))],
+            'month' => ['nullable', 'integer', 'between:1,12', Rule::requiredIf($request->boolean('limit_to_period'))],
             'remove_budget' => ['nullable', 'boolean'],
+            'limit_to_period' => ['sometimes', 'boolean'],
+            'exclude_from_totals' => ['sometimes', 'boolean'],
         ]);
 
         $data['is_active'] = (bool) $data['is_active'];
         $data['allows_refunds'] = (bool) $data['allows_refunds'];
+        $data['exclude_from_totals'] = (bool) ($data['exclude_from_totals'] ?? false);
 
-        $cashFlowSource->update(collect($data)->only([
-            'name',
-            'type',
-            'color',
-            'icon',
-            'description',
-            'is_active',
-            'allows_refunds',
-        ])->all());
+        $limitToPeriod = $request->boolean('limit_to_period', false);
+        $budgetYear = (int) ($data['year'] ?? now()->year);
+        $budgetMonth = (int) ($data['month'] ?? now()->month);
+
+        $cashFlowSource->update(array_merge(
+            collect($data)->only([
+                'name',
+                'type',
+                'color',
+                'icon',
+                'description',
+                'is_active',
+                'allows_refunds',
+            ])->all(),
+            [
+                'year' => $limitToPeriod ? $budgetYear : null,
+                'month' => $limitToPeriod ? $budgetMonth : null,
+                'exclude_from_totals' => $data['exclude_from_totals'] ?? false,
+            ]
+        ));
 
         if ($request->boolean('remove_budget')) {
-            $this->removeBudgetIfExists($cashFlowSource, $data);
+            $this->removeBudgetIfExists($cashFlowSource, [
+                'year' => $budgetYear,
+                'month' => $budgetMonth,
+            ]);
         } else {
-            $this->upsertBudgetIfNeeded($cashFlowSource->user_id, $cashFlowSource, $data);
+            $this->upsertBudgetIfNeeded(
+                $cashFlowSource->user_id,
+                $cashFlowSource,
+                array_merge($data, [
+                    'year' => $budgetYear,
+                    'month' => $budgetMonth,
+                ])
+            );
         }
 
         return back()->with('success', 'מקור התזרים עודכן בהצלחה');
@@ -132,6 +173,9 @@ class CashFlowSourceController extends Controller
                 'description' => $cashFlowSource->description,
                 'is_active' => $cashFlowSource->is_active,
                 'allows_refunds' => $cashFlowSource->allows_refunds,
+                'exclude_from_totals' => $cashFlowSource->exclude_from_totals,
+                'year' => $cashFlowSource->year,
+                'month' => $cashFlowSource->month,
             ]);
 
             $plannedAmount = $data['planned_amount'] ?? null;

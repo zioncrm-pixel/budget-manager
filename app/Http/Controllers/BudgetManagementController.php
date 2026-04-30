@@ -280,6 +280,102 @@ class BudgetManagementController extends Controller
         ]);
     }
 
+    public function autoAssign(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+
+        $data = $request->validate([
+            'year' => ['required', 'integer'],
+            'month' => ['required', 'integer', 'between:1,12'],
+        ]);
+
+        $year = (int) $data['year'];
+        $month = (int) $data['month'];
+
+        $currentPeriod = Carbon::create($year, $month, 1);
+        $previousPeriod = $currentPeriod->copy()->subMonth();
+
+        $periodColumn = DB::raw('COALESCE(posting_date, transaction_date)');
+
+        $previousAssignments = Transaction::query()
+            ->select('description', 'category_id', DB::raw('COUNT(*) as total'))
+            ->where('user_id', $user->id)
+            ->whereNotNull('category_id')
+            ->whereYear($periodColumn, $previousPeriod->year)
+            ->whereMonth($periodColumn, $previousPeriod->month)
+            ->groupBy('description', 'category_id')
+            ->get()
+            ->groupBy(function ($row) {
+                return mb_strtolower(trim($row->description ?? ''), 'UTF-8');
+            })
+            ->map(function ($items) {
+                return $items->sortByDesc('total')->first();
+            });
+
+        if ($previousAssignments->isEmpty()) {
+            return response()->json([
+                'assigned' => 0,
+                'message' => 'לא נמצאו שיוכים מחודש קודם.',
+            ]);
+        }
+
+        $categoryCache = Category::where('user_id', $user->id)->get()->keyBy('id');
+
+        $unassigned = Transaction::query()
+            ->where('user_id', $user->id)
+            ->whereNull('category_id')
+            ->whereYear($periodColumn, $year)
+            ->whereMonth($periodColumn, $month)
+            ->get();
+
+        $assignedIds = [];
+        $affectedCategories = new \Illuminate\Support\Collection();
+
+        foreach ($unassigned as $transaction) {
+            $key = mb_strtolower(trim($transaction->description ?? ''), 'UTF-8');
+            if (!$key) {
+                continue;
+            }
+
+            $match = $previousAssignments->get($key);
+            if (!$match) {
+                continue;
+            }
+
+            $categoryId = (int) $match->category_id;
+            $category = $categoryCache->get($categoryId);
+            if (!$category) {
+                continue;
+            }
+
+            $isCompatible = $category->type === 'both'
+                || $category->type === $transaction->type
+                || $transaction->type === 'both';
+
+            if (!$isCompatible) {
+                continue;
+            }
+
+            $transaction->category_id = $categoryId;
+            $transaction->save();
+            $assignedIds[] = $transaction->id;
+            $affectedCategories->push($categoryId);
+        }
+
+        $uniqueCategories = $affectedCategories->unique()->all();
+
+        foreach ($uniqueCategories as $categoryId) {
+            $this->refreshBudget($user->id, $categoryId, $currentPeriod);
+        }
+
+        return response()->json([
+            'assigned' => count($assignedIds),
+            'message' => count($assignedIds)
+                ? 'שיוך אוטומטי הושלם.'
+                : 'לא נמצאו תזרימים תואמים לשיוך אוטומטי.',
+        ]);
+    }
+
     public function assignTransactions(Request $request, Category $category): JsonResponse
     {
         abort_if($category->user_id !== Auth::id(), 403);

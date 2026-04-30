@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Builder;
 
 class CashFlowSource extends Model
 {
@@ -17,12 +18,36 @@ class CashFlowSource extends Model
         'description',
         'is_active',
         'allows_refunds',
+        'year',
+        'month',
+        'exclude_from_totals',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'allows_refunds' => 'boolean',
+        'year' => 'integer',
+        'month' => 'integer',
+        'exclude_from_totals' => 'boolean',
     ];
+
+    public function scopeVisibleForPeriod(Builder $query, ?int $year, ?int $month): Builder
+    {
+        if (!$year || !$month) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $visibilityQuery) use ($year, $month) {
+            $visibilityQuery
+                ->whereNull('year')
+                ->whereNull('month')
+                ->orWhere(function (Builder $scopedQuery) use ($year, $month) {
+                    $scopedQuery
+                        ->where('year', $year)
+                        ->where('month', $month);
+                });
+        });
+    }
 
     // קשר למשתמש
     public function user(): BelongsTo

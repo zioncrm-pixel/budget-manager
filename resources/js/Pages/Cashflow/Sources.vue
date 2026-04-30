@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import PeriodHeader from '@/Components/PeriodHeader.vue'
@@ -42,6 +42,7 @@ const isTransactionsModalOpen = ref(false)
 const transactionsSource = ref(null)
 const deletingSourceId = ref(null)
 const duplicatingSourceId = ref(null)
+const openSourceActionId = ref(null)
 
 const allMonthOptions = [
     { value: 1, label: 'ינואר' },
@@ -255,6 +256,17 @@ const handleToday = () => {
 
 onMounted(() => {
     tryApplyStoredPeriod()
+    if (typeof window !== 'undefined') {
+        window.addEventListener('click', handleGlobalSourceActionClick)
+    }
+})
+
+onBeforeUnmount(() => {
+    if (typeof window === 'undefined') {
+        return
+    }
+
+    window.removeEventListener('click', handleGlobalSourceActionClick)
 })
 
 const formatCurrency = (amount) => {
@@ -299,28 +311,6 @@ const sourceTypeBadgeClass = (type) => (type === 'income' ? 'bg-green-100 text-g
 
 const netAmountForSource = (source) => Number(source?.monthly_total_amount ?? source?.monthly_net_amount ?? 0)
 
-const getContrastingTextColor = (hexColor) => {
-    if (typeof hexColor !== 'string') {
-        return '#111827'
-    }
-
-    const sanitized = hexColor.replace('#', '').trim()
-    if (!/^[0-9a-fA-F]{3,6}$/.test(sanitized)) {
-        return '#111827'
-    }
-
-    const normalized = sanitized.length === 3
-        ? sanitized.split('').map(char => char + char).join('')
-        : sanitized.padEnd(6, '0')
-
-    const r = parseInt(normalized.slice(0, 2), 16)
-    const g = parseInt(normalized.slice(2, 4), 16)
-    const b = parseInt(normalized.slice(4, 6), 16)
-
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-    return luminance > 0.6 ? '#111827' : '#FFFFFF'
-}
-
 const formatMonthlyAmount = (source) => {
     const amount = netAmountForSource(source)
 
@@ -351,6 +341,31 @@ const formatDateLabel = (date) => {
     if (!date) return 'אין נתונים'
     return new Date(date).toLocaleDateString('he-IL')
 }
+
+const toRgbaWithAlpha = (hexColor, alpha = 0.2) => {
+    if (typeof hexColor !== 'string') {
+        return `rgba(229, 231, 235, ${alpha})`
+    }
+
+    const sanitized = hexColor.replace('#', '').trim()
+    if (![3, 6].includes(sanitized.length) || !/^[0-9a-fA-F]+$/.test(sanitized)) {
+        return `rgba(229, 231, 235, ${alpha})`
+    }
+
+    const normalized = sanitized.length === 3
+        ? sanitized.split('').map(char => char + char).join('')
+        : sanitized
+
+    const r = parseInt(normalized.slice(0, 2), 16)
+    const g = parseInt(normalized.slice(2, 4), 16)
+    const b = parseInt(normalized.slice(4, 6), 16)
+
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const getSourceHeaderBackground = (color) => toRgbaWithAlpha(color || '#E5E7EB', 0.2)
+
+const sourceBudgetPlaceholder = (type) => (type === 'income' ? 'מקור הכנסה ללא תקציב' : 'טרם הוגדר תקציב למקור תזרים זה')
 
 const openNewSourceModal = () => {
     modalMode.value = 'create'
@@ -439,6 +454,66 @@ const closeTransactionsModal = () => {
 }
 
 const hasSources = computed(() => Array.isArray(props.cashFlowSourcesWithStats) && props.cashFlowSourcesWithStats.length > 0)
+
+const getSourceUniqueId = (source) => source?.id
+
+const toggleSourceActionMenu = (source) => {
+    const id = getSourceUniqueId(source)
+    if (!id) {
+        openSourceActionId.value = null
+        return
+    }
+
+    openSourceActionId.value = openSourceActionId.value === id ? null : id
+}
+
+const closeSourceActionMenu = () => {
+    openSourceActionId.value = null
+}
+
+const isSourceActionMenuOpen = (source) => {
+    const id = getSourceUniqueId(source)
+    if (!id) {
+        return false
+    }
+
+    return openSourceActionId.value === id
+}
+
+const isSourceDuplicating = (source) => {
+    const id = getSourceUniqueId(source)
+    if (!id) {
+        return false
+    }
+
+    return duplicatingSourceId.value === id
+}
+
+const handleEditSourceClick = (source) => {
+    closeSourceActionMenu()
+    openEditSourceModal(source)
+}
+
+const handleDuplicateSourceClick = (source) => {
+    closeSourceActionMenu()
+    duplicateSource(source)
+}
+
+const handleDeleteSourceClick = (source) => {
+    closeSourceActionMenu()
+    confirmSourceDelete(source)
+}
+
+const handleGlobalSourceActionClick = (event) => {
+    const target = event.target
+    if (typeof Element === 'undefined' || !(target instanceof Element)) {
+        return
+    }
+
+    if (!target.closest('[data-source-actions]')) {
+        closeSourceActionMenu()
+    }
+}
 </script>
 
 <template>
@@ -483,156 +558,223 @@ const hasSources = computed(() => Array.isArray(props.cashFlowSourcesWithStats) 
                             <div
                                 v-for="source in props.cashFlowSourcesWithStats"
                                 :key="source.id"
-                                class="flex h-full flex-col gap-4 rounded-lg border-2 border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
+                                class="flex h-full flex-col gap-4 rounded-lg border-2 border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md"
                                 :class="{
-                                    'border-indigo-300 bg-indigo-50': source.is_active,
+                                    'border-indigo-300 bg-indigo-50': source.budget,
                                     'opacity-75': source.is_active === false,
                                 }"
                             >
-                                <div class="flex items-start justify-between gap-3">
-                                    <div class="flex items-center gap-3">
-                                        <span
-                                            class="flex h-12 w-12 items-center justify-center rounded-md text-3xl shadow-sm ring-1 ring-black/5"
-                                            :style="{
-                                                backgroundColor: source.color || '#E5E7EB',
-                                                color: getContrastingTextColor(source.color || '#E5E7EB'),
-                                            }"
-                                            aria-hidden="true"
-                                        >
-                                            {{ source.icon || (source.type === 'income' ? '💰' : '💸') }}
-                                        </span>
-                                        <div class="text-right">
-                                            <h4 class="text-lg font-semibold text-gray-900">{{ source.name }}</h4>
-                                            <div class="mt-2 flex items-center justify-end gap-2 text-xs">
-                                                <span class="inline-flex items-center rounded-full px-2.5 py-1 font-medium" :class="sourceTypeBadgeClass(source.type)">
-                                                    {{ sourceTypeLabel(source.type) }}
-                                                </span>
-                                                <span
-                                                    v-if="source.is_active === false"
-                                                    class="inline-flex items-center rounded-full bg-gray-200 px-2.5 py-1 font-medium text-gray-700"
-                                                >
-                                                    לא פעיל
-                                                </span>
+                                <div
+                                    class="px-3 py-2"
+                                    :style="{ backgroundColor: getSourceHeaderBackground(source.color) }"
+                                >
+                                    <div class="flex items-center justify-between gap-3">
+                                        <div class="flex flex-1 items-center gap-3">
+                                            <span
+                                                class="flex h-10 w-10 items-center justify-center rounded-md text-2xl shadow-sm ring-1 ring-black/5"
+                                                :style="{ color: source.color || '#4F46E5' }"
+                                                aria-hidden="true"
+                                            >
+                                                {{ source.icon || (source.type === 'income' ? '💰' : '💸') }}
+                                            </span>
+                                            <div class="flex flex-1 flex-col text-right">
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <h4 class="text-lg font-semibold text-gray-900">
+                                                        {{ source.name }}
+                                                    </h4>
+                                                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium" :class="sourceTypeBadgeClass(source.type)">
+                                                        {{ sourceTypeLabel(source.type) }}
+                                                    </span>
+                                                </div>
+                                                <div class="mt-1 flex flex-wrap items-center justify-end gap-2 text-[11px] text-gray-600">
+                                                    <span
+                                                        v-if="source.is_active === false"
+                                                        class="inline-flex items-center rounded-full bg-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700"
+                                                    >
+                                                        לא פעיל
+                                                    </span>
+                                                    <span>
+                                                        {{ source.monthly_transaction_count ?? 0 }} עסקאות בחודש
+                                                    </span>
+                                                </div>
                                             </div>
+                                        </div>
+
+                                        <div class="relative" data-source-actions @click.stop>
+                                            <button
+                                                type="button"
+                                                class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 text-lg text-gray-500 transition hover:border-indigo-200 hover:text-indigo-600 focus:outline-none"
+                                                :disabled="isSourceDuplicating(source)"
+                                                @click.stop="toggleSourceActionMenu(source)"
+                                                :aria-expanded="isSourceActionMenuOpen(source)"
+                                            >
+                                                <svg
+                                                    v-if="isSourceDuplicating(source)"
+                                                    class="h-5 w-5 animate-spin text-indigo-600"
+                                                    xmlns="http://www.w3.org/2000/svg"
+                                                    fill="none"
+                                                    viewBox="0 0 24 24"
+                                                >
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647ז"></path>
+                                                </svg>
+                                                <span v-else class="inline-block text-2xl leading-none">⋮</span>
+                                                <span class="sr-only">אפשרויות</span>
+                                            </button>
+
+                                            <transition
+                                                enter-active-class="transition transform duration-150 ease-out"
+                                                enter-from-class="opacity-0 translate-y-2"
+                                                enter-to-class="opacity-100 translate-y-0"
+                                                leave-active-class="transition transform duration-100 ease-in"
+                                                leave-from-class="opacity-100 translate-y-0"
+                                                leave-to-class="opacity-0 translate-y-2"
+                                            >
+                                                <div
+                                                    v-if="isSourceActionMenuOpen(source)"
+                                                    class="absolute left-auto right-0 z-20 mt-2 w-40 rounded-xl border border-gray-200 bg-white p-2 text-xs font-semibold text-gray-600 shadow-lg"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-200 hover:text-indigo-700"
+                                                        @click="handleEditSourceClick(source)"
+                                                    >
+                                                        ✏️
+                                                        <span>עריכה</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="mt-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-200 hover:text-indigo-700 disabled:opacity-60"
+                                                        :disabled="isSourceDuplicating(source)"
+                                                        @click="handleDuplicateSourceClick(source)"
+                                                    >
+                                                        <span class="flex items-center gap-1">
+                                                            <svg
+                                                                v-if="isSourceDuplicating(source)"
+                                                                class="h-4 w-4 animate-spin text-gray-500"
+                                                                xmlns="http://www.w3.org/2000/svg"
+                                                                fill="none"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647ז"></path>
+                                                            </svg>
+                                                            <span v-else>📄</span>
+                                                        </span>
+                                                        <span class="font-medium">שכפול</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="mt-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-200 hover:text-indigo-700 disabled:opacity-60"
+                                                        :disabled="deletingSourceId === source.id"
+                                                        @click="handleDeleteSourceClick(source)"
+                                                    >
+                                                        <span class="flex items-center gap-1">
+                                                            <svg
+                                                                v-if="deletingSourceId === source.id"
+                                                                class="h-4 w-4 animate-spin text-gray-500"
+                                                                xmlns="http://www.w3.org/2000/svg"
+                                                                fill="none"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647ז"></path>
+                                                            </svg>
+                                                            <span v-else>🗑️</span>
+                                                        </span>
+                                                        <span>מחיקה</span>
+                                                    </button>
+                                                </div>
+                                            </transition>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-1 flex-col gap-3 px-3 pb-4 text-sm text-gray-600">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span
+                                            v-if="source.exclude_from_totals"
+                                            class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                                        >
+                                            לא בסיכום הכללי
+                                        </span>
+                                        <span
+                                            v-if="source.year && source.month"
+                                            class="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-200"
+                                        >
+                                            לחודש {{ source.month }}/{{ source.year }}
+                                        </span>
+                                    </div>
+
+                                    <div class="rounded-md border border-gray-200 bg-white/80 p-3 text-xs text-gray-600 shadow-sm">
+                                        <div class="flex items-center justify-between text-sm">
+                                            <span>סה"כ לחודש</span>
+                                            <span :class="monthlyAmountClass(source)">{{ formatMonthlyAmount(source) }} ₪</span>
+                                        </div>
+                                        <div
+                                            v-if="source.allows_refunds"
+                                            class="mt-2 grid gap-1 text-[11px] text-gray-500"
+                                        >
+                                            <div class="flex items-center justify-between">
+                                                <span>סך הוצאות</span>
+                                                <span class="font-medium text-red-600">-{{ formatCurrency(Number(source.monthly_expense_amount || 0)) }} ₪</span>
+                                            </div>
+                                            <div class="flex items-center justify-between">
+                                                <span>סך זיכויים</span>
+                                                <span class="font-medium text-green-600">+{{ formatCurrency(Number(source.monthly_income_amount || 0)) }} ₪</span>
+                                            </div>
+                                        </div>
+                                        <div class="mt-2 flex items-center justify-between text-[11px] text-gray-500">
+                                            <span>עסקה אחרונה</span>
+                                            <span>{{ formatDateLabel(source.latest_transaction_date) }}</span>
                                         </div>
                                     </div>
 
-                                    <div class="flex items-center gap-2">
+                                    <div v-if="source.description" class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                                        {{ source.description }}
+                                    </div>
+
+                                    <div v-if="source.budget" class="rounded-md border border-gray-200 bg-white p-3 text-sm shadow-sm">
+                                        <div class="flex items-center justify-between text-xs font-medium text-gray-500">
+                                            <span>תקציב לחודש</span>
+                                            <span>{{ formatCurrency(source.budget.planned_amount) }} ₪ מתוכנן</span>
+                                        </div>
+                                        <div class="mt-2 flex items-center justify-between text-sm">
+                                            <span>בוצע</span>
+                                            <span :class="source.budget.spent_amount >= source.budget.planned_amount ? 'text-red-600 font-semibold' : 'text-indigo-600 font-semibold'">
+                                                {{ formatCurrency(source.budget.spent_amount) }} ₪
+                                            </span>
+                                        </div>
+                                        <div class="mt-1 flex items-center justify-between text-sm">
+                                            <span>נותר</span>
+                                            <span :class="source.budget.remaining_amount >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'">
+                                                {{ formatCurrency(source.budget.remaining_amount) }} ₪
+                                            </span>
+                                        </div>
+                                        <div class="mt-3 h-2 w-full rounded-full bg-gray-200">
+                                            <div
+                                                class="h-2 rounded-full transition-all duration-300"
+                                                :class="source.budget.progress_bar_color"
+                                                :style="{ width: Math.min(source.budget.progress_percentage, 100) + '%' }"
+                                            ></div>
+                                        </div>
+                                        <div class="mt-1 text-center text-xs font-medium text-gray-500">
+                                            {{ source.budget.progress_percentage }}% נוצל
+                                        </div>
+                                    </div>
+
+                                    <div v-else class="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">
+                                        {{ sourceBudgetPlaceholder(source.type) }}
+                                    </div>
+
+                                    <div class="mt-auto pt-2 text-center">
                                         <button
-                                            class="inline-flex items-center rounded-md border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
-                                            @click.stop="openEditSourceModal(source)"
+                                            class="text-sm font-semibold text-indigo-600 transition-colors hover:text-indigo-800"
+                                            @click.stop="openTransactionsModal(source)"
                                         >
-                                            ✏️ עריכה
-                                        </button>
-                                        <button
-                                            class="inline-flex items-center rounded-md border border-green-200 px-3 py-1.5 text-xs font-semibold text-green-600 transition-colors hover:bg-green-50 disabled:opacity-60"
-                                            :disabled="duplicatingSourceId === source.id"
-                                            @click.stop="duplicateSource(source)"
-                                        >
-                                            <svg
-                                                v-if="duplicatingSourceId === source.id"
-                                                class="-ml-1 mr-2 h-4 w-4 animate-spin text-green-600"
-                                                xmlns="http://www.w3.org/2000/svg"
-                                                fill="none"
-                                                viewBox="0 0 24 24"
-                                            >
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
-                                            </svg>
-                                            📄 שכפול
-                                        </button>
-                                        <button
-                                            class="inline-flex items-center rounded-md border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
-                                            :disabled="deletingSourceId === source.id"
-                                            @click.stop="confirmSourceDelete(source)"
-                                        >
-                                            <svg
-                                                v-if="deletingSourceId === source.id"
-                                                class="-ml-1 mr-2 h-4 w-4 animate-spin text-red-600"
-                                                xmlns="http://www.w3.org/2000/svg"
-                                                fill="none"
-                                                viewBox="0 0 24 24"
-                                            >
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938ל3-2.647z"></path>
-                                            </svg>
-                                            🗑️ מחיקה
+                                            ניהול עסקאות
                                         </button>
                                     </div>
-                                </div>
-
-                                <div class="grid grid-cols-1 gap-3 text-sm text-gray-600">
-                                <div class="flex items-center justify-between">
-                                    <span>סה"כ לחודש</span>
-                                    <span :class="monthlyAmountClass(source)">{{ formatMonthlyAmount(source) }} ₪</span>
-                                </div>
-                                <div
-                                    v-if="source.allows_refunds"
-                                    class="flex flex-col gap-1 text-xs text-gray-500"
-                                >
-                                    <div class="flex items-center justify-between">
-                                        <span>סך הוצאות</span>
-                                        <span class="font-medium text-red-600">-{{ formatCurrency(Number(source.monthly_expense_amount || 0)) }} ₪</span>
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span>סך זיכויים</span>
-                                        <span class="font-medium text-green-600">+{{ formatCurrency(Number(source.monthly_income_amount || 0)) }} ₪</span>
-                                    </div>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span>מספר עסקאות</span>
-                                    <span class="font-semibold text-gray-900">{{ source.monthly_transaction_count }}</span>
-                                </div>
-                                    <div class="flex items-center justify-between text-xs text-gray-500">
-                                        <span>עסקה אחרונה</span>
-                                        <span>{{ formatDateLabel(source.latest_transaction_date) }}</span>
-                                    </div>
-                                </div>
-
-                                <div v-if="source.description" class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                                    {{ source.description }}
-                                </div>
-
-                                <div v-if="source.budget" class="rounded-md border border-gray-200 bg-white p-3 text-sm shadow-sm">
-                                    <div class="flex items-center justify-between text-xs font-medium text-gray-500">
-                                        <span>תקציב לחודש</span>
-                                        <span>{{ formatCurrency(source.budget.planned_amount) }} ₪ מתוכנן</span>
-                                    </div>
-                                    <div class="mt-2 flex items-center justify-between text-sm">
-                                        <span>בוצע</span>
-                                        <span :class="source.budget.spent_amount >= source.budget.planned_amount ? 'text-red-600 font-semibold' : 'text-indigo-600 font-semibold'">
-                                            {{ formatCurrency(source.budget.spent_amount) }} ₪
-                                        </span>
-                                    </div>
-                                    <div class="mt-1 flex items-center justify-between text-sm">
-                                        <span>נותר</span>
-                                        <span :class="source.budget.remaining_amount >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'">
-                                            {{ formatCurrency(source.budget.remaining_amount) }} ₪
-                                        </span>
-                                    </div>
-                                    <div class="mt-3 h-2 w-full rounded-full bg-gray-200">
-                                        <div
-                                            class="h-2 rounded-full transition-all duration-300"
-                                            :class="source.budget.progress_bar_color"
-                                            :style="{ width: Math.min(source.budget.progress_percentage, 100) + '%' }"
-                                        ></div>
-                                    </div>
-                                    <div class="mt-1 text-center text-xs font-medium text-gray-500">
-                                        {{ source.budget.progress_percentage }}% נוצל
-                                    </div>
-                                </div>
-
-                                <div v-else class="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">
-                                    לא הוגדר תקציב לחודש זה
-                                </div>
-
-                                <div class="mt-auto text-center">
-                                    <button
-                                        class="text-sm font-semibold text-indigo-600 transition-colors hover:text-indigo-800"
-                                        @click.stop="openTransactionsModal(source)"
-                                    >
-                                        ניהול עסקאות
-                                    </button>
                                 </div>
                             </div>
                         </div>
